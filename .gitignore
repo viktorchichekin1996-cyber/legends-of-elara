@@ -1,0 +1,47 @@
+# --- Секреты и переменные окружения ---
+.env
+.env.*.local
+.env.production
+*.pem
+*.key
+
+# --- Python (Backend) ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# --- Node.js / React / Vite (Frontend) ---
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/tsconfig.tsbuildinfo
+
+# --- Docker ---
+.docker/
+docker-compose.override.yml
+deploy/backups/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Logs ---
+*.log
+logs/
