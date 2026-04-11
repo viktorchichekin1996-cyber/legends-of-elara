@@ -123,7 +123,7 @@ async def create_character(
         # Остальное
         level=1,
         experience=0,
-        status=CHARACTER_STATUS.alive,
+        status='alive',
         fatigue=0,
         gold=0,
         inventory_slots=10,

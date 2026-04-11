@@ -19,6 +19,15 @@ class CharacterStatus(str, enum.Enum):
     DEAD = "dead"
     RESTING = "resting"
 
+class LocationType(str, enum.Enum):
+    CITY = "city"
+    FOREST = "forest"
+    ROAD = "road"
+    DUNGEON = "dungeon"
+    CAVE = "cave"
+    MOUNTAIN = "mountain"
+    SWAMP = "swamp"
+
 class ItemType(str, enum.Enum):
     WEAPON = "weapon"
     ARMOR = "armor"
