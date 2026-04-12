@@ -12,7 +12,7 @@ class YandexGPTClient:
             "Authorization": f"Api-Key {settings.YANDEX_API_KEY}",
             "Content-Type": "application/json"
         }
-        self.model_uri = f"{settings.YANDEX_FOLDER_ID}/yandexgpt-lite/latest"
+        self.model_uri = f"gpt://{settings.YANDEX_FOLDER_ID}/yandexgpt-lite/latest"
         self.client = httpx.AsyncClient(timeout=30.0)
 
     async def generate(self, messages: list[dict[str, str]], temperature: float = 0.7, max_tokens: int = 1500) -> str:

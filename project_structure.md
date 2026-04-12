@@ -1,6 +1,6 @@
 # Структура проекта: legends-of-elara
 
-*Сгенерировано: 2026-04-11 22:23:51*
+*Сгенерировано: 2026-04-12 11:35:41*
 
 *Путь: `/root/legends-of-elara`*
 
@@ -27,13 +27,15 @@
         - `client.py` (2.2 KB)
         - `fallback.py` (1.3 KB)
         - `parser.py` (1.3 KB)
-        - `prompts.py` (3.5 KB)
+        - `prompts.py` (4.7 KB)
       - **api/**
         - **v1/**
           - `__init__.py` (0.0 KB)
           - `auth.py` (2.6 KB)
           - `character.py` (5.8 KB)
-          - `router.py` (0.2 KB)
+          - `combat.py` (6.2 KB)
+          - `locations.py` (2.7 KB)
+          - `router.py` (0.4 KB)
         - `__init__.py` (0.0 KB)
         - `deps.py` (0.9 KB)
         - `router.py` (0.1 KB)
@@ -62,12 +64,17 @@
         - `__init__.py` (0.0 KB)
         - `auth.py` (0.7 KB)
         - `character.py` (2.1 KB)
-        - `enums.py` (1.0 KB)
+        - `combat.py` (2.4 KB)
+        - `enums.py` (1.2 KB)
+        - `location.py` (1.3 KB)
       - **services/**
         - `character_service.py` (6.5 KB)
+        - `combat_service.py` (17.0 KB)
+        - `location_service.py` (7.3 KB)
       - **utils/**
         - `calculations.py` (1.7 KB)
         - `constants.py` (2.2 KB)
+        - `dice.py` (1.4 KB)
       - `__init__.py` (0.0 KB)
       - `config.py` (0.6 KB)
       - `main.py` (1.8 KB)
@@ -100,7 +107,7 @@
 
 ## Файлы кода
 
-Найдено файлов кода: **54**
+Найдено файлов кода: **61**
 
 
 
@@ -935,7 +942,7 @@ class YandexGPTClient:
             "Authorization": f"Api-Key {settings.YANDEX_API_KEY}",
             "Content-Type": "application/json"
         }
-        self.model_uri = f"{settings.YANDEX_FOLDER_ID}/yandexgpt-lite/latest"
+        self.model_uri = f"gpt://{settings.YANDEX_FOLDER_ID}/yandexgpt-lite/latest"
         self.client = httpx.AsyncClient(timeout=30.0)
 
     async def generate(self, messages: list[dict[str, str]], temperature: float = 0.7, max_tokens: int = 1500) -> str:
@@ -1071,7 +1078,7 @@ async def parse_ai_response(raw_text: str, max_retries: int = 2) -> AiEventRespo
 
 ### 14. `backend/app/ai/prompts.py`
 
-**Размер:** 3.5 KB
+**Размер:** 4.7 KB
 
 **Язык:** `python`
 
@@ -1153,6 +1160,28 @@ def format_prompt(context: dict, user_action: str) -> list[dict]:
         {"role": "system", "text": SYSTEM_PROMPT},
         {"role": "user", "text": context_str}
     ]
+
+COMBAT_NARRATIVE_PROMPT = """
+Ты — мастер подземелий в мрачном фэнтези мире "Легенды Элары".
+Твоя задача: создать короткое, атмосферное описание (нарратив) результата хода в бою.
+
+Контекст боя:
+- Персонаж: {char_name} ({char_class}, ур. {char_level})
+- Враг: {enemy_name}
+- Текущее действие: {action_type}
+- Результат: {result_desc}
+- Урон: {damage} HP
+- Состояние: Враг {enemy_hp}/{enemy_max} HP, Герой {char_hp}/{char_max} HP
+
+Правила:
+1. Стиль: Тёмное фэнтези, серьёзный, кинематографичный.
+2. Длина: 1-2 предложения (не больше 150 символов).
+3. Не повторяй сухие цифры, опиши эффект (свист ветра, хруст, вспышка).
+4. Если промах: опиши ловкое уклонение или неудачный удар.
+5. Если крит: опиши сокрушительный удар.
+6. Язык: Русский.
+7. Вывод: ТОЛЬКО текст описания, без кавычек и пояснений.
+"""
 
 ```
 
@@ -1495,9 +1524,295 @@ async def level_up_character(
 
 
 
-### 21. `backend/app/api/v1/router.py`
+### 21. `backend/app/api/v1/combat.py`
 
-**Размер:** 0.2 KB
+**Размер:** 6.2 KB
+
+**Язык:** `python`
+
+
+
+```python
+"""Эндпоинты боевой системы."""
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.api.deps import get_db, get_current_user
+from app.models.character import Character
+from app.models.combat import CombatSession
+from app.schemas.combat import (
+    CombatActionRequest,
+    CombatActionResult,
+    CombatStateResponse,
+    CombatStartRequest,
+)
+from app.services.combat_service import (
+    start_combat,
+    get_active_combat,
+    get_combat_state,
+    process_player_attack,
+    process_enemy_turn,
+)
+
+router = APIRouter(prefix="/combat", tags=["Combat"])
+
+@router.post("/start", response_model=CombatStateResponse)
+async def start_combat_endpoint(
+    request: CombatStartRequest = CombatStartRequest(),
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CombatStateResponse:
+    """Начало боя с врагом."""
+    # Получаем персонажа
+    char_result = await db.execute(
+        select(Character).where(Character.user_id == current_user.id)
+    )
+    character = char_result.scalar_one_or_none()
+    
+    if not character:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Character not found"
+        )
+    
+    # Проверяем, нет ли уже активного боя
+    existing = await get_active_combat(db, str(character.id))
+    if existing:
+        return await get_combat_state(db, existing, character)
+    
+    # Начинаем бой
+    combat = await start_combat(db, str(character.id), request.enemy_id)
+    await db.commit()
+    
+    return await get_combat_state(db, combat, character)
+
+@router.get("/state", response_model=CombatStateResponse)
+async def get_combat_state_endpoint(
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CombatStateResponse:
+    """Получение текущего состояния боя."""
+    char_result = await db.execute(
+        select(Character).where(Character.user_id == current_user.id)
+    )
+    character = char_result.scalar_one_or_none()
+    
+    if not character:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Character not found"
+        )
+    
+    combat = await get_active_combat(db, str(character.id))
+    if not combat:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active combat session"
+        )
+    
+    return await get_combat_state(db, combat, character)
+
+@router.post("/action", response_model=CombatActionResult)
+async def combat_action_endpoint(
+    request: CombatActionRequest,
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CombatActionResult:
+    """Выполнение действия в бою."""
+    char_result = await db.execute(
+        select(Character).where(Character.user_id == current_user.id)
+    )
+    character = char_result.scalar_one_or_none()
+    
+    if not character:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Character not found"
+        )
+    
+    combat = await get_active_combat(db, str(character.id))
+    if not combat:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active combat session"
+        )
+    
+    # Обработка действий
+    if request.action == "attack":
+        result = await process_player_attack(db, combat, character)
+    elif request.action == "defend":
+        # Упрощённая защита: снижение урона на 50% в следующем ходе врага
+        result = CombatActionResult(
+            success=True,
+            message="Вы заняли оборонительную позицию. Следующая атака врага будет слабее."
+        )
+    elif request.action == "use_item":
+        # Упрощённо: использование зелья
+        if request.item_id:
+            result = CombatActionResult(
+                success=True,
+                message="Вы использовали предмет. (Реализация предметов — Этап 8)"
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="item_id required for use_item action"
+            )
+    elif request.action == "flee":
+        # Упрощённый побег: 50% шанс
+        import random
+        if random.random() > 0.5:
+            result = await process_enemy_turn(db, combat, character)
+            if not result.battle_ended:
+                result.message += " | Побег не удался!"
+        else:
+            combat.is_active = False
+            combat.result = "fled"
+            await db.flush()
+            result = CombatActionResult(
+                success=True,
+                message="Вы успешно сбежали из боя!",
+                battle_ended=True,
+                battle_result="fled"
+            )
+    elif request.action == "skill":
+        result = CombatActionResult(
+            success=True,
+            message="Навыки будут реализованы на следующем этапе."
+        )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unknown action"
+        )
+    
+    # Если бой не закончен — ход врага
+    if not result.battle_ended and request.action == "attack":
+        enemy_result = await process_enemy_turn(db, combat, character)
+        result.player_damage_taken = enemy_result.player_damage_taken
+        result.message += f" | {enemy_result.message}"
+        if enemy_result.battle_ended:
+            result.battle_ended = True
+            result.battle_result = enemy_result.battle_result
+    
+    await db.commit()
+    
+    # Обновляем состояние боя в ответе
+    if not result.battle_ended:
+        updated_combat = await get_active_combat(db, str(character.id))
+        if updated_combat:
+            result.combat_state = await get_combat_state(db, updated_combat, character)
+    
+    return result
+
+```
+
+
+
+### 22. `backend/app/api/v1/locations.py`
+
+**Размер:** 2.7 KB
+
+**Язык:** `python`
+
+
+
+```python
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.api.deps import get_db, get_current_user
+from app.models.character import Character
+from app.models.location import Location, LocationConnection
+from app.schemas.location import (
+    LocationResponse,
+    NeighborLocationResponse,
+    MoveRequest,
+    MoveResponse,
+)
+from app.services.location_service import (
+    get_neighbors,
+    move_character,
+)
+
+router = APIRouter(prefix="/locations", tags=["Locations"])
+
+@router.get("/current", response_model=LocationResponse)
+async def get_current_location_endpoint(
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> LocationResponse:
+    result = await db.execute(
+        select(Location)
+        .join(Character, Character.current_location_id == Location.id)
+        .where(Character.user_id == current_user.id)
+    )
+    location = result.scalar_one_or_none()
+    
+    if not location:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Character or location not found")
+    
+    return LocationResponse.model_validate(location)
+
+@router.get("/neighbors", response_model=list[NeighborLocationResponse])
+async def get_neighbor_locations(
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[NeighborLocationResponse]:
+    char_result = await db.execute(
+        select(Character).where(Character.user_id == current_user.id)
+    )
+    character = char_result.scalar_one_or_none()
+    
+    if not character:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Character not found")
+    
+    neighbors = await get_neighbors(db, str(character.current_location_id))
+    
+    return [
+        NeighborLocationResponse(
+            id=n.id,
+            name=n.name,
+            location_type=n.location_type,
+            distance=1,
+            travel_difficulty=1,
+            danger_level=n.danger_level,
+            is_visited=False,
+        )
+        for n in neighbors
+    ]
+
+@router.post("/move", response_model=MoveResponse)
+async def move_to_location(
+    request: MoveRequest,
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MoveResponse:
+    char_result = await db.execute(
+        select(Character).where(Character.user_id == current_user.id)
+    )
+    character = char_result.scalar_one_or_none()
+    
+    if not character:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Character not found")
+    
+    result = await move_character(
+        db,
+        str(character.id),
+        str(request.target_location_id)
+    )
+    
+    await db.commit()
+    
+    return result
+
+```
+
+
+
+### 23. `backend/app/api/v1/router.py`
+
+**Размер:** 0.4 KB
 
 **Язык:** `python`
 
@@ -1507,16 +1822,20 @@ async def level_up_character(
 from fastapi import APIRouter
 from app.api.v1.auth import router as auth_router
 from app.api.v1.character import router as character_router
+from app.api.v1.combat import router as combat_router
+from app.api.v1.locations import router as locations_router
 
 v1_router = APIRouter()
 v1_router.include_router(auth_router)
 v1_router.include_router(character_router)
+v1_router.include_router(combat_router)
+v1_router.include_router(locations_router)
 
 ```
 
 
 
-### 22. `backend/app/config.py`
+### 24. `backend/app/config.py`
 
 **Размер:** 0.6 KB
 
@@ -1554,7 +1873,7 @@ settings = Settings()
 
 
 
-### 23. `backend/app/core/__init__.py`
+### 25. `backend/app/core/__init__.py`
 
 **Размер:** 0.0 KB
 
@@ -1569,7 +1888,7 @@ settings = Settings()
 
 
 
-### 24. `backend/app/core/security.py`
+### 26. `backend/app/core/security.py`
 
 **Размер:** 1.5 KB
 
@@ -1619,7 +1938,7 @@ def decode_token(token: str) -> TokenPayload:
 
 
 
-### 25. `backend/app/core/vk_auth.py`
+### 27. `backend/app/core/vk_auth.py`
 
 **Размер:** 1.2 KB
 
@@ -1661,7 +1980,7 @@ def validate_vk_init_data(init_data: str, secret: str) -> dict:
 
 
 
-### 26. `backend/app/db/__init__.py`
+### 28. `backend/app/db/__init__.py`
 
 **Размер:** 0.0 KB
 
@@ -1675,7 +1994,7 @@ def validate_vk_init_data(init_data: str, secret: str) -> dict:
 
 
 
-### 27. `backend/app/db/base.py`
+### 29. `backend/app/db/base.py`
 
 **Размер:** 0.8 KB
 
@@ -1712,7 +2031,7 @@ class TimestampMixin:
 
 
 
-### 28. `backend/app/db/session.py`
+### 30. `backend/app/db/session.py`
 
 **Размер:** 0.3 KB
 
@@ -1736,7 +2055,7 @@ async_session = async_sessionmaker(
 
 
 
-### 29. `backend/app/main.py`
+### 31. `backend/app/main.py`
 
 **Размер:** 1.8 KB
 
@@ -1807,7 +2126,7 @@ async def health_check():
 
 
 
-### 30. `backend/app/models/__init__.py`
+### 32. `backend/app/models/__init__.py`
 
 **Размер:** 0.7 KB
 
@@ -1839,7 +2158,7 @@ __all__ = [
 
 
 
-### 31. `backend/app/models/character.py`
+### 33. `backend/app/models/character.py`
 
 **Размер:** 3.2 KB
 
@@ -1907,7 +2226,7 @@ class Character(Base, TimestampMixin):
 
 
 
-### 32. `backend/app/models/combat.py`
+### 34. `backend/app/models/combat.py`
 
 **Размер:** 2.9 KB
 
@@ -1973,7 +2292,7 @@ class CombatSession(Base, TimestampMixin):
 
 
 
-### 33. `backend/app/models/enums.py`
+### 35. `backend/app/models/enums.py`
 
 **Размер:** 1.2 KB
 
@@ -2023,7 +2342,7 @@ CHARACTER_STATUS = pg_enum('character_status',
 
 
 
-### 34. `backend/app/models/inventory.py`
+### 36. `backend/app/models/inventory.py`
 
 **Размер:** 1.9 KB
 
@@ -2074,7 +2393,7 @@ class Equipment(Base, TimestampMixin):
 
 
 
-### 35. `backend/app/models/item.py`
+### 37. `backend/app/models/item.py`
 
 **Размер:** 1.8 KB
 
@@ -2118,7 +2437,7 @@ class Item(Base, TimestampMixin):
 
 
 
-### 36. `backend/app/models/location.py`
+### 38. `backend/app/models/location.py`
 
 **Размер:** 2.3 KB
 
@@ -2177,7 +2496,7 @@ class LocationConnection(Base):
 
 
 
-### 37. `backend/app/models/memory.py`
+### 39. `backend/app/models/memory.py`
 
 **Размер:** 1.2 KB
 
@@ -2216,7 +2535,7 @@ class CharacterMemory(Base, TimestampMixin):
 
 
 
-### 38. `backend/app/models/quest.py`
+### 40. `backend/app/models/quest.py`
 
 **Размер:** 1.8 KB
 
@@ -2265,7 +2584,7 @@ class CharacterQuest(Base, TimestampMixin):
 
 
 
-### 39. `backend/app/models/shop.py`
+### 41. `backend/app/models/shop.py`
 
 **Размер:** 1.9 KB
 
@@ -2318,7 +2637,7 @@ class Transaction(Base, TimestampMixin):
 
 
 
-### 40. `backend/app/models/system.py`
+### 42. `backend/app/models/system.py`
 
 **Размер:** 1.7 KB
 
@@ -2368,7 +2687,7 @@ class GameLog(Base):
 
 
 
-### 41. `backend/app/models/user.py`
+### 43. `backend/app/models/user.py`
 
 **Размер:** 0.7 KB
 
@@ -2398,7 +2717,7 @@ class User(Base, TimestampMixin):
 
 
 
-### 42. `backend/app/schemas/__init__.py`
+### 44. `backend/app/schemas/__init__.py`
 
 **Размер:** 0.0 KB
 
@@ -2413,7 +2732,7 @@ class User(Base, TimestampMixin):
 
 
 
-### 43. `backend/app/schemas/auth.py`
+### 45. `backend/app/schemas/auth.py`
 
 **Размер:** 0.7 KB
 
@@ -2456,7 +2775,7 @@ class UserResponse(BaseModel):
 
 
 
-### 44. `backend/app/schemas/character.py`
+### 46. `backend/app/schemas/character.py`
 
 **Размер:** 2.1 KB
 
@@ -2543,9 +2862,92 @@ class LevelUpResponse(BaseModel):
 
 
 
-### 45. `backend/app/schemas/enums.py`
+### 47. `backend/app/schemas/combat.py`
 
-**Размер:** 1.0 KB
+**Размер:** 2.4 KB
+
+**Язык:** `python`
+
+
+
+```python
+from pydantic import BaseModel, Field, field_validator
+from datetime import datetime
+from typing import Optional, List
+import uuid
+from app.schemas.enums import CharacterClass
+
+class CombatActionRequest(BaseModel):
+    """Запрос на действие в бою."""
+    action: str = Field(..., pattern="^(attack|defend|use_item|flee|skill)$")
+    target: Optional[str] = None  # Для навыков с выбором цели
+    item_id: Optional[uuid.UUID] = None  # Для использования предметов
+    skill_name: Optional[str] = None  # Для использования навыков
+    
+    @field_validator('action')
+    @classmethod
+    def validate_action(cls, v: str) -> str:
+        if v not in ('attack', 'defend', 'use_item', 'flee', 'skill'):
+            raise ValueError('Недопустимое действие')
+        return v
+
+class CombatLogEntry(BaseModel):
+    """Запись в логе боя."""
+    turn: int
+    actor: str  # "player" или "enemy"
+    action: str
+    description: str
+    damage: Optional[int] = None
+    healing: Optional[int] = None
+    is_critical: bool = False
+    is_miss: bool = False
+    
+    model_config = {"from_attributes": True}
+
+class CombatStateResponse(BaseModel):
+    """Текущее состояние боя."""
+    combat_session_id: uuid.UUID
+    enemy_name: str
+    enemy_level: int
+    enemy_hp_current: int
+    enemy_hp_max: int
+    player_hp_current: int
+    player_hp_max: int
+    player_mana_current: int
+    player_mana_max: int
+    current_turn: int
+    is_player_turn: bool
+    combat_log: List[CombatLogEntry]
+    
+    model_config = {"from_attributes": True}
+
+class CombatActionResult(BaseModel):
+    """Результат действия в бою."""
+    success: bool
+    message: str
+    player_damage_taken: int = 0
+    enemy_damage_taken: int = 0
+    player_healing_received: int = 0
+    is_critical: bool = False
+    is_miss: bool = False
+    combat_state: Optional[CombatStateResponse] = None
+    battle_ended: bool = False
+    battle_result: Optional[str] = None  # "victory", "defeat", "fled"
+    rewards: Optional[dict] = None
+    
+    model_config = {"from_attributes": True}
+
+class CombatStartRequest(BaseModel):
+    """Запрос на начало боя (для тестов)."""
+    enemy_id: Optional[uuid.UUID] = None  # Если не указан, выбирается случайный по уровню
+
+```
+
+
+
+### 48. `backend/app/schemas/enums.py`
+
+**Размер:** 1.2 KB
 
 **Язык:** `python`
 
@@ -2572,6 +2974,15 @@ class CharacterStatus(str, enum.Enum):
     ALIVE = "alive"
     DEAD = "dead"
     RESTING = "resting"
+
+class LocationType(str, enum.Enum):
+    CITY = "city"
+    FOREST = "forest"
+    ROAD = "road"
+    DUNGEON = "dungeon"
+    CAVE = "cave"
+    MOUNTAIN = "mountain"
+    SWAMP = "swamp"
 
 class ItemType(str, enum.Enum):
     WEAPON = "weapon"
@@ -2602,7 +3013,71 @@ class EquipmentSlot(str, enum.Enum):
 
 
 
-### 46. `backend/app/services/character_service.py`
+### 49. `backend/app/schemas/location.py`
+
+**Размер:** 1.3 KB
+
+**Язык:** `python`
+
+
+
+```python
+from pydantic import BaseModel, Field
+from datetime import datetime
+from typing import Optional, List
+import uuid
+from app.schemas.enums import LocationType
+
+class LocationResponse(BaseModel):
+    """Информация о локации."""
+    id: uuid.UUID
+    name: str
+    location_type: LocationType
+    region: str
+    coord_x: int
+    coord_y: int
+    danger_level: int
+    min_level: int
+    description: Optional[str] = None
+    ai_description_generated: bool
+    is_safe: bool
+    has_shop: bool
+    has_tavern: bool
+    created_at: datetime
+    
+    model_config = {"from_attributes": True}
+
+class NeighborLocationResponse(BaseModel):
+    """Соседняя локация для навигации."""
+    id: uuid.UUID
+    name: str
+    location_type: LocationType
+    distance: int
+    travel_difficulty: int
+    danger_level: int
+    is_visited: bool = False
+    
+    model_config = {"from_attributes": True}
+
+class MoveRequest(BaseModel):
+    """Запрос на перемещение."""
+    target_location_id: uuid.UUID = Field(..., description="ID целевой локации")
+
+class MoveResponse(BaseModel):
+    """Результат перемещения."""
+    success: bool
+    message: str
+    new_location: LocationResponse
+    fatigue_added: int
+    encounter: Optional[dict] = None
+    
+    model_config = {"from_attributes": True}
+
+```
+
+
+
+### 50. `backend/app/services/character_service.py`
 
 **Размер:** 6.5 KB
 
@@ -2736,7 +3211,7 @@ async def create_character(
         # Остальное
         level=1,
         experience=0,
-        status=CHARACTER_STATUS.alive,
+        status='alive',
         fatigue=0,
         gold=0,
         inventory_slots=10,
@@ -2774,7 +3249,733 @@ async def apply_level_up(character: Character) -> dict:
 
 
 
-### 47. `backend/app/utils/calculations.py`
+### 51. `backend/app/services/combat_service.py`
+
+**Размер:** 17.0 KB
+
+**Язык:** `python`
+
+
+
+```python
+"""Бизнес-логика боевой системы."""
+import asyncio
+import random
+from datetime import datetime
+from typing import Optional
+
+from fastapi import HTTPException, status
+from sqlalchemy import select, and_, func
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.ai import get_gpt_client, get_prompt_cache
+from app.ai.prompts import COMBAT_NARRATIVE_PROMPT
+from app.models.character import Character
+from app.models.combat import Enemy, CombatSession
+from app.models.location import Location
+from app.schemas.combat import (
+    CombatActionResult, CombatStateResponse, CombatLogEntry
+)
+from app.services.character_service import apply_level_up
+from app.utils.calculations import calculate_modifier, clamp_value, check_level_up
+from app.utils.dice import roll_d20, roll_damage, check_success, calculate_dc
+
+# Константы боя
+BASE_AC = 10  # Базовый класс брони
+BASE_DC = 10  # Базовая сложность проверки
+CRIT_MULTIPLIER = 2  # Множитель урона при крите
+FLEE_DC_BASE = 15  # Базовая сложность побега
+
+
+async def get_active_combat(session: AsyncSession, character_id: str) -> Optional[CombatSession]:
+    """Получает активную боевую сессию персонажа."""
+    result = await session.execute(
+        select(CombatSession).where(
+            CombatSession.character_id == character_id,
+            CombatSession.is_active == True
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def start_combat(
+    session: AsyncSession,
+    character_id: str,
+    enemy_id: Optional[str] = None
+) -> CombatSession:
+    """Инициализирует новый бой."""
+    # Проверяем, нет ли уже активного боя
+    existing = await get_active_combat(session, character_id)
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Бой уже активен"
+        )
+    
+    # Получаем персонажа
+    char_result = await session.execute(
+        select(Character).where(Character.id == character_id)
+    )
+    character = char_result.scalar_one_or_none()
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    
+    # Получаем или выбираем врага
+    if enemy_id:
+        enemy_result = await session.execute(
+            select(Enemy).where(Enemy.id == enemy_id)
+        )
+        enemy = enemy_result.scalar_one_or_none()
+        if not enemy:
+            raise HTTPException(status_code=404, detail="Enemy not found")
+    else:
+        # Выбираем случайного врага подходящего уровня
+        enemy_result = await session.execute(
+            select(Enemy)
+            .where(
+                and_(
+                    Enemy.level >= max(1, character.level - 2),
+                    Enemy.level <= character.level + 2
+                )
+            )
+            .order_by(func.random())
+            .limit(1)
+        )
+        enemy = enemy_result.scalar_one_or_none()
+        if not enemy:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No suitable enemies found"
+            )
+    
+    # Создаём боевую сессию
+    combat = CombatSession(
+        character_id=character.id,
+        enemy_id=enemy.id,
+        enemy_name=enemy.name,
+        enemy_hp_current=enemy.hp,
+        enemy_hp_max=enemy.hp,
+        enemy_stats={
+            "strength": enemy.strength,
+            "agility": enemy.agility,
+            "intelligence": enemy.intelligence,
+            "damage_min": enemy.damage_min,
+            "damage_max": enemy.damage_max,
+            "armor": enemy.armor,
+            "dodge_chance": enemy.dodge_chance,
+            "crit_chance": enemy.crit_chance,
+        },
+        is_active=True,
+        current_turn=1,
+        combat_log=[f"Бой начался! На вас напал {enemy.name}!"],
+    )
+    
+    session.add(combat)
+    await session.flush()
+    await session.refresh(combat)
+    
+    return combat
+
+
+def calculate_player_attack_dc(character: Character) -> int:
+    """Рассчитывает сложность атаки игрока."""
+    enemy_agi_mod = calculate_modifier(character.agility)
+    return BASE_DC + enemy_agi_mod
+
+
+def calculate_enemy_attack_dc(enemy_stats: dict) -> int:
+    """Рассчитывает сложность атаки врага."""
+    return BASE_DC + calculate_modifier(enemy_stats.get("agility", 10))
+
+
+def calculate_player_armor(character: Character) -> int:
+    """Рассчитывает броню игрока (упрощённо, без экипировки)."""
+    return 0
+
+
+def calculate_damage(
+    attacker_str: int,
+    defender_armor: int,
+    min_dmg: int,
+    max_dmg: int,
+    is_critical: bool = False
+) -> int:
+    """Рассчитывает итоговый урон."""
+    str_mod = calculate_modifier(attacker_str)
+    base_dmg = roll_damage(min_dmg, max_dmg, str_mod, is_critical)
+    return max(0, base_dmg - defender_armor)
+
+
+async def generate_combat_narrative(
+    character: Character,
+    enemy_name: str,
+    action_type: str,
+    result_desc: str,
+    damage: int,
+    enemy_hp: int,
+    enemy_max: int
+) -> str:
+    """Генерирует атмосферное описание хода через ИИ."""
+    try:
+        client = get_gpt_client()
+        cache = get_prompt_cache()
+        
+        prompt_text = COMBAT_NARRATIVE_PROMPT.format(
+            char_name=character.name,
+            char_class=character.character_class,
+            char_level=character.level,
+            enemy_name=enemy_name,
+            action_type=action_type,
+            result_desc=result_desc,
+            damage=damage if damage else 0,
+            enemy_hp=enemy_hp,
+            enemy_max=enemy_max,
+            char_hp=character.hp_current,
+            char_max=character.hp_max
+        )
+        
+        messages = [{"role": "user", "text": prompt_text}]
+        prompt_hash = cache.hash_prompt(messages)
+        
+        # Проверяем кэш
+        cached_response = await cache.get(prompt_hash)
+        if cached_response:
+            return cached_response.strip()
+        
+        # Запрос к ИИ с таймаутом (чтобы не ждать долго)
+        response = await asyncio.wait_for(
+            client.generate(messages, temperature=0.8, max_tokens=100),
+            timeout=3.0
+        )
+        
+        # Кэшируем результат
+        await cache.set(prompt_hash, response.strip())
+        return response.strip()
+        
+    except Exception:
+        # В случае ошибки возвращаем стандартное описание (fallback)
+        return f"{result_desc} (Урон: {damage if damage else 0})"
+
+
+async def process_player_attack(
+    session: AsyncSession,
+    combat: CombatSession,
+    character: Character
+) -> CombatActionResult:
+    """Обрабатывает атаку игрока."""
+    enemy_stats = combat.enemy_stats
+    
+    # Бросок атаки
+    attack_mod = calculate_modifier(character.strength)
+    attack_roll, is_crit = roll_d20(attack_mod)
+    attack_dc = calculate_enemy_attack_dc(enemy_stats)
+    
+    # Проверка попадания
+    if attack_roll == 1:
+        # Критический промах
+        log_entry = f"Вы промахнулись критически!"
+        ai_description = await generate_combat_narrative(
+            character=character,
+            enemy_name=combat.enemy_name,
+            action_type="player_attack",
+            result_desc=log_entry,
+            damage=0,
+            enemy_hp=combat.enemy_hp_current,
+            enemy_max=combat.enemy_hp_max
+        )
+        combat.combat_log.append(CombatLogEntry(
+            turn=combat.current_turn,
+            actor="player",
+            action="attack",
+            description=ai_description,
+            is_miss=True
+        ).model_dump())
+        await session.flush()
+        return CombatActionResult(
+            success=True,
+            message=log_entry,
+            is_miss=True,
+            is_critical=False
+        )
+    
+    if is_crit:
+        log_entry = f"Критический удар! "
+    elif check_success(attack_roll, attack_dc):
+        log_entry = f"Вы попали! "
+    else:
+        log_entry = f"Вы промахнулись. "
+        ai_description = await generate_combat_narrative(
+            character=character,
+            enemy_name=combat.enemy_name,
+            action_type="player_attack",
+            result_desc=log_entry,
+            damage=0,
+            enemy_hp=combat.enemy_hp_current,
+            enemy_max=combat.enemy_hp_max
+        )
+        combat.combat_log.append(CombatLogEntry(
+            turn=combat.current_turn,
+            actor="player",
+            action="attack",
+            description=ai_description,
+            is_miss=True
+        ).model_dump())
+        await session.flush()
+        return CombatActionResult(success=True, message=log_entry, is_miss=True)
+    
+    # Расчёт урона
+    damage = calculate_damage(
+        attacker_str=character.strength,
+        defender_armor=enemy_stats.get("armor", 0),
+        min_dmg=character.strength // 2,
+        max_dmg=character.strength,
+        is_critical=is_crit
+    )
+    
+    # Применение урона
+    combat.enemy_hp_current = max(0, combat.enemy_hp_current - damage)
+    
+    log_entry += f"Урон: {damage}. HP врага: {combat.enemy_hp_current}/{combat.enemy_hp_max}"
+    
+    # Генерация ИИ описания
+    ai_description = await generate_combat_narrative(
+        character=character,
+        enemy_name=combat.enemy_name,
+        action_type="player_attack",
+        result_desc=log_entry,
+        damage=damage,
+        enemy_hp=combat.enemy_hp_current,
+        enemy_max=combat.enemy_hp_max
+    )
+    
+    # Добавляем запись в лог с ИИ описанием
+    combat.combat_log.append(CombatLogEntry(
+        turn=combat.current_turn,
+        actor="player",
+        action="attack",
+        description=ai_description,
+        damage=damage,
+        is_critical=is_crit
+    ).model_dump())
+    
+    # Проверка победы
+    if combat.enemy_hp_current <= 0:
+        return await finish_combat(session, combat, character, victory=True)
+    
+    await session.flush()
+    return CombatActionResult(
+        success=True,
+        message=log_entry,
+        enemy_damage_taken=damage,
+        is_critical=is_crit
+    )
+
+
+async def process_enemy_turn(
+    session: AsyncSession,
+    combat: CombatSession,
+    character: Character
+) -> CombatActionResult:
+    """Обрабатывает ход врага."""
+    enemy_stats = combat.enemy_stats
+    
+    # Простая логика: враг всегда атакует
+    attack_mod = calculate_modifier(enemy_stats.get("strength", 10))
+    attack_roll, is_crit = roll_d20(attack_mod)
+    attack_dc = calculate_player_attack_dc(character)
+    
+    if attack_roll == 1:
+        log_entry = f"{combat.enemy_name} промахнулся критически!"
+        ai_description = await generate_combat_narrative(
+            character=character,
+            enemy_name=combat.enemy_name,
+            action_type="enemy_attack",
+            result_desc=log_entry,
+            damage=0,
+            enemy_hp=combat.enemy_hp_current,
+            enemy_max=combat.enemy_hp_max
+        )
+        combat.combat_log.append(CombatLogEntry(
+            turn=combat.current_turn,
+            actor="enemy",
+            action="attack",
+            description=ai_description,
+            is_miss=True
+        ).model_dump())
+        await session.flush()
+        return CombatActionResult(success=True, message=log_entry, is_miss=True)
+    
+    if is_crit:
+        log_entry = f"{combat.enemy_name} наносит критический удар! "
+    elif check_success(attack_roll, attack_dc):
+        log_entry = f"{combat.enemy_name} атакует! "
+    else:
+        log_entry = f"{combat.enemy_name} промахнулся. "
+        ai_description = await generate_combat_narrative(
+            character=character,
+            enemy_name=combat.enemy_name,
+            action_type="enemy_attack",
+            result_desc=log_entry,
+            damage=0,
+            enemy_hp=combat.enemy_hp_current,
+            enemy_max=combat.enemy_hp_max
+        )
+        combat.combat_log.append(CombatLogEntry(
+            turn=combat.current_turn,
+            actor="enemy",
+            action="attack",
+            description=ai_description,
+            is_miss=True
+        ).model_dump())
+        await session.flush()
+        return CombatActionResult(success=True, message=log_entry, is_miss=True)
+    
+    # Расчёт урона
+    damage = calculate_damage(
+        attacker_str=enemy_stats.get("strength", 10),
+        defender_armor=calculate_player_armor(character),
+        min_dmg=enemy_stats.get("damage_min", 1),
+        max_dmg=enemy_stats.get("damage_max", 5),
+        is_critical=is_crit
+    )
+    
+    # Применение урона персонажу
+    character.hp_current = max(0, character.hp_current - damage)
+    
+    log_entry += f"Урон: {damage}. Ваше HP: {character.hp_current}/{character.hp_max}"
+    
+    # Генерация ИИ описания атаки врага
+    ai_description = await generate_combat_narrative(
+        character=character,
+        enemy_name=combat.enemy_name,
+        action_type="enemy_attack",
+        result_desc=log_entry,
+        damage=damage,
+        enemy_hp=combat.enemy_hp_current,
+        enemy_max=combat.enemy_hp_max
+    )
+    
+    combat.combat_log.append(CombatLogEntry(
+        turn=combat.current_turn,
+        actor="enemy",
+        action="attack",
+        description=ai_description,
+        damage=damage,
+        is_critical=is_crit
+    ).model_dump())
+    
+    # Проверка поражения
+    if character.hp_current <= 0:
+        return await finish_combat(session, combat, character, victory=False)
+    
+    # Следующий ход
+    combat.current_turn += 1
+    await session.flush()
+    
+    return CombatActionResult(
+        success=True,
+        message=log_entry,
+        player_damage_taken=damage,
+        is_critical=is_crit
+    )
+
+
+async def finish_combat(
+    session: AsyncSession,
+    combat: CombatSession,
+    character: Character,
+    victory: bool
+) -> CombatActionResult:
+    """Завершает бой и начисляет награды."""
+    combat.is_active = False
+    
+    if victory:
+        # Награды за победу
+        xp_gain = 10
+        gold_gain = random.randint(5, 15)
+        
+        character.experience += xp_gain
+        character.gold += gold_gain
+        
+        # Проверка повышения уровня
+        leveled_up, new_level = check_level_up(character.experience, character.level)
+        if leveled_up:
+            character.level = new_level
+            await apply_level_up(character)
+        
+        combat.result = "victory"
+        combat.rewards = {"xp": xp_gain, "gold": gold_gain}
+        
+        message = f"🎉 Победа! +{xp_gain} XP, +{gold_gain} золота"
+        if leveled_up:
+            message += f" | Уровень повышен до {new_level}!"
+        
+    else:
+        # Штрафы за поражение
+        character.gold = max(0, character.gold - 10)
+        character.fatigue = clamp_value(character.fatigue + 20, 0, 100)
+        
+        combat.result = "defeat"
+        message = "💀 Поражение... Вы потеряли 10 золота и устали."
+    
+    combat.ended_at = datetime.now()
+    
+    # Восстановление выносливости после боя
+    character.stamina_current = clamp_value(
+        character.stamina_current + 10,
+        0,
+        character.stamina_max
+    )
+    
+    await session.flush()
+    
+    return CombatActionResult(
+        success=True,
+        message=message,
+        battle_ended=True,
+        battle_result=combat.result,
+        rewards=combat.rewards if victory else None
+    )
+
+
+async def get_combat_state(
+    session: AsyncSession,
+    combat: CombatSession,
+    character: Character
+) -> CombatStateResponse:
+    """Возвращает текущее состояние боя."""
+    return CombatStateResponse(
+        combat_session_id=combat.id,
+        enemy_name=combat.enemy_name,
+        enemy_level=combat.enemy_stats.get("level", 1),
+        enemy_hp_current=combat.enemy_hp_current,
+        enemy_hp_max=combat.enemy_hp_max,
+        player_hp_current=character.hp_current,
+        player_hp_max=character.hp_max,
+        player_mana_current=character.mana_current,
+        player_mana_max=character.mana_max,
+        current_turn=combat.current_turn,
+        is_player_turn=True,
+        combat_log=[
+            CombatLogEntry(**(entry if isinstance(entry, dict) else {
+                "turn": 1,
+                "actor": "system",
+                "action": "log",
+                "description": str(entry),
+                "is_critical": False,
+                "is_miss": False
+            }))
+            for entry in combat.combat_log
+        ]
+    )
+```
+
+
+
+### 52. `backend/app/services/location_service.py`
+
+**Размер:** 7.3 KB
+
+**Язык:** `python`
+
+
+
+```python
+from typing import Optional
+import random
+from sqlalchemy import select, and_
+from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import HTTPException, status
+from app.models.location import Location, LocationConnection
+from app.models.character import Character
+from app.models.combat import Enemy, CombatSession
+from app.utils.constants import FATIGUE_WARNING, FATIGUE_ACTION_BLOCK
+from app.utils.calculations import clamp_value
+from app.schemas.location import LocationResponse, NeighborLocationResponse, MoveResponse
+
+# Вероятности случайных встреч по типам локаций
+ENCOUNTER_PROBABILITIES = {
+    "city": 0.0,
+    "forest": 0.3,
+    "road": 0.1,
+    "dungeon": 0.7,
+    "cave": 0.5,
+    "mountain": 0.4,
+    "swamp": 0.6,
+}
+
+BASE_FATIGUE_COST = 5
+
+async def get_location_by_id(session: AsyncSession, location_id: str) -> Location:
+    result = await session.execute(select(Location).where(Location.id == location_id))
+    location = result.scalar_one_or_none()
+    if not location:
+        raise HTTPException(status_code=404, detail="Location not found")
+    return location
+
+async def get_current_location(session: AsyncSession, character_id: str) -> Location:
+    result = await session.execute(
+        select(Location)
+        .join(Character, Character.current_location_id == Location.id)
+        .where(Character.id == character_id)
+    )
+    location = result.scalar_one_or_none()
+    if not location:
+        raise HTTPException(status_code=404, detail="Current location not found")
+    return location
+
+async def get_neighbors(session: AsyncSession, location_id: str) -> list[Location]:
+    result = await session.execute(
+        select(Location)
+        .join(LocationConnection, Location.id == LocationConnection.to_location_id)
+        .where(LocationConnection.from_location_id == location_id)
+    )
+    return result.scalars().all()
+
+async def validate_move(
+    session: AsyncSession,
+    character_id: str,
+    target_location_id: str
+) -> tuple[Character, Location, LocationConnection]:
+    char_result = await session.execute(select(Character).where(Character.id == character_id))
+    character = char_result.scalar_one_or_none()
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    
+    target = await get_location_by_id(session, target_location_id)
+    
+    conn_result = await session.execute(
+        select(LocationConnection).where(
+            and_(
+                LocationConnection.from_location_id == character.current_location_id,
+                LocationConnection.to_location_id == target_location_id
+            )
+        )
+    )
+    connection = conn_result.scalar_one_or_none()
+    if not connection:
+        raise HTTPException(status_code=400, detail="Cannot move to this location directly")
+    
+    if character.fatigue >= FATIGUE_ACTION_BLOCK:
+        raise HTTPException(status_code=400, detail=f"Too fatigued ({character.fatigue}%). Rest first.")
+    
+    return character, target, connection
+
+def calculate_fatigue_cost(connection: LocationConnection, character: Character) -> int:
+    base = BASE_FATIGUE_COST
+    difficulty_bonus = connection.travel_difficulty * 2
+    level_penalty = max(0, connection.travel_difficulty - character.level) * 3
+    total = base + difficulty_bonus + level_penalty
+    return clamp_value(total, 1, 50)
+
+async def check_random_encounter(
+    session: AsyncSession,
+    location: Location,
+    character: Character
+) -> Optional[dict]:
+    probability = ENCOUNTER_PROBABILITIES.get(location.location_type, 0.1)
+    
+    if random.random() > probability:
+        return None
+    
+    enemy_result = await session.execute(
+        select(Enemy)
+        .where(
+            and_(
+                Enemy.level >= max(1, character.level - 2),
+                Enemy.level <= character.level + 2
+            )
+        )
+        .order_by(Enemy.level)
+        .limit(1)
+    )
+    enemy = enemy_result.scalar_one_or_none()
+    
+    if not enemy:
+        return None
+    
+    combat = CombatSession(
+        character_id=character.id,
+        enemy_id=enemy.id,
+        enemy_name=enemy.name,
+        enemy_hp_current=enemy.hp,
+        enemy_hp_max=enemy.hp,
+        enemy_stats={
+            "strength": enemy.strength,
+            "agility": enemy.agility,
+            "intelligence": enemy.intelligence,
+            "damage_min": enemy.damage_min,
+            "damage_max": enemy.damage_max,
+            "armor": enemy.armor,
+        },
+        is_active=True,
+        current_turn=1,
+        combat_log=[f"Внезапная встреча с {enemy.name}!"],
+    )
+    session.add(combat)
+    await session.flush()
+    
+    return {
+        "type": "combat",
+        "enemy_name": enemy.name,
+        "enemy_level": enemy.level,
+        "combat_session_id": str(combat.id),
+        "message": f"На вас напал {enemy.name}!"
+    }
+
+async def generate_location_description(
+    location: Location,
+    character_class: str,
+    character_level: int
+) -> str:
+    templates = {
+        "city": f"Город {location.name} встречает вас шумом и суетой. Здесь можно найти торговцев и таверну.",
+        "forest": f"Лес {location.name} окутан таинственной тишиной. Тени шевелятся между древними деревьями.",
+        "road": f"Пыльная дорога {location.name} ведёт через {location.region}. Вдали виднеются силуэты путников.",
+        "dungeon": f"Мрачный вход в {location.name} зияет темнотой. Оттуда доносится эхо чьих-то шагов.",
+        "cave": f"Пещера {location.name} хранит секреты древних времён. Сталактиты сверкают в тусклом свете.",
+        "mountain": f"Горы {location.name} возвышаются над облаками. Ветер свистит в ущельях.",
+        "swamp": f"Болото {location.name} окутано туманом. Где-то вдалеке квакают невидимые лягушки.",
+    }
+    return templates.get(location.location_type, f"Вы находитесь в {location.name}.")
+
+async def move_character(
+    session: AsyncSession,
+    character_id: str,
+    target_location_id: str
+) -> MoveResponse:
+    character, target, connection = await validate_move(session, character_id, target_location_id)
+    
+    fatigue_cost = calculate_fatigue_cost(connection, character)
+    character.fatigue = clamp_value(character.fatigue + fatigue_cost, 0, 100)
+    
+    character.current_location_id = target_location_id
+    
+    encounter = await check_random_encounter(session, target, character)
+    
+    if not target.ai_description_generated:
+        target.description = await generate_location_description(target, character.character_class, character.level)
+        target.ai_description_generated = True
+    
+    await session.flush()
+    
+    message = f"Вы прибыли в {target.name}."
+    if character.fatigue >= FATIGUE_WARNING:
+        message += f" Вы очень устали ({character.fatigue}%)."
+    
+    return MoveResponse(
+        success=True,
+        message=message,
+        new_location=LocationResponse.model_validate(target),
+        fatigue_added=fatigue_cost,
+        encounter=encounter
+    )
+
+```
+
+
+
+### 53. `backend/app/utils/calculations.py`
 
 **Размер:** 1.7 KB
 
@@ -2827,7 +4028,7 @@ def calculate_effective_stat(base_stat: int, equipment_bonus: int = 0, buff_bonu
 
 
 
-### 48. `backend/app/utils/constants.py`
+### 54. `backend/app/utils/constants.py`
 
 **Размер:** 2.2 KB
 
@@ -2898,7 +4099,62 @@ REST_TAVERN_RECOVERY = 1.0  # 100%
 
 
 
-### 49. `backend/seeds/load_seeds.py`
+### 55. `backend/app/utils/dice.py`
+
+**Размер:** 1.4 KB
+
+**Язык:** `python`
+
+
+
+```python
+"""Утилиты для бросков кубиков и расчётов d20."""
+import random
+from typing import Optional
+
+def roll_d20(modifier: int = 0, advantage: bool = False, disadvantage: bool = False) -> tuple[int, bool]:
+    """
+    Бросает 1d20 с модификатором.
+    
+    Возвращает: (результат_броска, был_ли_крит)
+    """
+    if advantage and disadvantage:
+        # Взаимная отмена
+        roll = random.randint(1, 20)
+    elif advantage:
+        roll = max(random.randint(1, 20), random.randint(1, 20))
+    elif disadvantage:
+        roll = min(random.randint(1, 20), random.randint(1, 20))
+    else:
+        roll = random.randint(1, 20)
+    
+    is_critical = roll in (1, 20)
+    return roll + modifier, is_critical
+
+def roll_damage(min_dmg: int, max_dmg: int, modifier: int = 0, is_critical: bool = False) -> int:
+    """
+    Рассчитывает урон.
+    
+    При критическом успехе урон удваивается.
+    """
+    base = random.randint(min_dmg, max_dmg) + modifier
+    if is_critical and base > 0:
+        base *= 2
+    return max(0, base)
+
+def calculate_dc(base: int, modifier: int = 0) -> int:
+    """Рассчитывает сложность проверки (DC)."""
+    return base + modifier
+
+def check_success(roll: int, dc: int) -> bool:
+    """Проверяет успех проверки."""
+    return roll >= dc
+
+```
+
+
+
+### 56. `backend/seeds/load_seeds.py`
 
 **Размер:** 6.0 KB
 
@@ -3010,7 +4266,7 @@ if __name__ == "__main__":
 
 
 
-### 50. `frontend/public/index.html`
+### 57. `frontend/public/index.html`
 
 **Размер:** 1.6 KB
 
@@ -3065,7 +4321,7 @@ if __name__ == "__main__":
 
 
 
-### 51. `nginx/conf.d/api.conf`
+### 58. `nginx/conf.d/api.conf`
 
 **Размер:** 0.4 KB
 
@@ -3095,7 +4351,7 @@ server {
 
 
 
-### 52. `nginx/conf.d/app.conf`
+### 59. `nginx/conf.d/app.conf`
 
 **Размер:** 0.0 KB
 
@@ -3109,7 +4365,7 @@ server {
 
 
 
-### 53. `nginx/nginx.conf`
+### 60. `nginx/nginx.conf`
 
 **Размер:** 0.5 KB
 
@@ -3139,7 +4395,7 @@ http {
 
 
 
-### 54. `scan_project.py`
+### 61. `scan_project.py`
 
 **Размер:** 13.7 KB
 
@@ -3534,4 +4790,4 @@ if __name__ == "__main__":
 
 ---
 
-*Всего файлов кода: 54*
+*Всего файлов кода: 61*
