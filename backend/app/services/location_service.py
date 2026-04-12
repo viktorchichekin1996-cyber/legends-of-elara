@@ -9,6 +9,7 @@ from app.models.combat import Enemy, CombatSession
 from app.utils.constants import FATIGUE_WARNING, FATIGUE_ACTION_BLOCK
 from app.utils.calculations import clamp_value
 from app.schemas.location import LocationResponse, NeighborLocationResponse, MoveResponse
+from app.services.quest_service import update_quest_progress
 
 # Вероятности случайных встреч по типам локаций
 ENCOUNTER_PROBABILITIES = {
@@ -187,3 +188,5 @@ async def move_character(
         fatigue_added=fatigue_cost,
         encounter=encounter
     )
+# 9.2 Хук прогресса квеста на посещение
+    await update_quest_progress(session, character_id, "visit", target.name, 1)

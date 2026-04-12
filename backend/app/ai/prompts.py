@@ -1,3 +1,4 @@
+"""Шаблоны промптов для YandexGPT."""
 import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,11 +9,12 @@ from app.models.memory import CharacterMemory
 
 logger = logging.getLogger(__name__)
 
+# Экранируем фигурные скобки в примере схемы: {{ вместо {
 SYSTEM_PROMPT = """
 Ты — нейросетевой движок событий для текстовой RPG "Легенды Элары".
 Правила вывода:
 1. Ответ СТРОГО в формате JSON. Никакого markdown, никаких пояснений вне JSON.
-2. Схема: {"description": "атмосферное описание события", "choices": [{"text": "вариант", "action": "тип_действия"}]}
+2. Схема: {{ "description": "атмосферное описание события", "choices": [{{"text": "вариант", "action": "тип_действия"}}]}}
 3. Допустимые action: "move", "fight", "rest", "interact", "loot", "travel", "shop", "tavern".
 4. Учитывай класс, уровень, опасность локации, активные квесты и память.
 5. Тон: тёмное фэнтези, погружение в мир Элары.
@@ -73,6 +75,37 @@ def format_prompt(context: dict, user_action: str) -> list[dict]:
         {"role": "system", "text": SYSTEM_PROMPT},
         {"role": "user", "text": context_str}
     ]
+
+# === НОВЫЙ ПРОМПТ ДЛЯ ГЕНЕРАЦИИ КВЕСТОВ ===
+# Все фигурные скобки в примере схемы экранированы: {{ вместо {
+QUEST_GENERATION_PROMPT = """
+Ты — геймдизайнер тёмного фэнтези RPG "Легенды Элары".
+Создай уникальный квест на основе контекста персонажа.
+
+Контекст:
+- Класс: {char_class}, Уровень: {char_level}
+- Локация: {location_name} (Тип: {location_type}, Опасность: {danger_level})
+- Активные квесты: {quests}
+
+Требования:
+1. Ответ СТРОГО в формате чистого JSON без markdown, без пояснений.
+2. Схема ответа (экранирована для Python .format()):
+{{
+  "name": "Название квеста",
+  "description": "Описание задания в 2-3 предложениях",
+  "goals": [
+    {{"type": "kill|collect|visit", "target": "имя_цели", "count": число}}
+  ],
+  "rewards": {{"xp": число, "gold": число}},
+  "min_level": число
+}}
+3. Цели должны соответствовать типу локации (в лесу = волки/грибы, в городе = NPC/торговля).
+4. Награды сбалансированы по уровню персонажа (ур. {char_level}).
+5. Не дублируй активные квесты: {quests}.
+6. Язык ответа: русский.
+
+Сгенерируй квест и верни ТОЛЬКО валидный JSON.
+"""
 
 COMBAT_NARRATIVE_PROMPT = """
 Ты — мастер подземелий в мрачном фэнтези мире "Легенды Элары".

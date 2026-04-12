@@ -1,6 +1,6 @@
 # Структура проекта: legends-of-elara
 
-*Сгенерировано: 2026-04-12 12:21:46*
+*Сгенерировано: 2026-04-12 14:13:06*
 
 *Путь: `/root/legends-of-elara`*
 
@@ -32,10 +32,11 @@
         - **v1/**
           - `__init__.py` (0.0 KB)
           - `auth.py` (2.6 KB)
-          - `character.py` (5.8 KB)
+          - `character.py` (5.4 KB)
           - `combat.py` (6.2 KB)
+          - `inventory.py` (5.1 KB)
           - `locations.py` (2.7 KB)
-          - `router.py` (0.4 KB)
+          - `router.py` (0.5 KB)
         - `__init__.py` (0.0 KB)
         - `deps.py` (0.9 KB)
         - `router.py` (0.1 KB)
@@ -66,10 +67,12 @@
         - `character.py` (2.1 KB)
         - `combat.py` (2.4 KB)
         - `enums.py` (1.2 KB)
+        - `inventory.py` (1.3 KB)
         - `location.py` (1.3 KB)
       - **services/**
-        - `character_service.py` (6.5 KB)
-        - `combat_service.py` (17.0 KB)
+        - `character_service.py` (5.4 KB)
+        - `combat_service.py` (18.9 KB)
+        - `inventory_service.py` (12.0 KB)
         - `location_service.py` (7.3 KB)
       - **utils/**
         - `calculations.py` (1.7 KB)
@@ -83,6 +86,7 @@
     - `.env` (0.5 KB) 📝
     - `alembic.ini` (3.5 KB)
     - `requirements.txt` (0.6 KB)
+    - `uvicorn.log` (1.0 KB)
   - **deploy/**
     - **backups/**
   - **docs/**
@@ -98,6 +102,7 @@
   - `.env` (0.5 KB) 📝
   - `.env.example` (0.7 KB)
   - `.gitignore` (0.6 KB)
+  - `fix_stage8.sh` (15.1 KB)
   - `README.md` (0.5 KB)
   - `scan_project.py` (13.7 KB)
 
@@ -106,7 +111,7 @@
 
 ## Файлы кода
 
-Найдено файлов кода: **61**
+Найдено файлов кода: **65**
 
 
 
@@ -1349,7 +1354,7 @@ async def refresh_token(
 
 ### 20. `backend/app/api/v1/character.py`
 
-**Размер:** 5.8 KB
+**Размер:** 5.4 KB
 
 **Язык:** `python`
 
@@ -1363,7 +1368,6 @@ from sqlalchemy import select
 from app.api.deps import get_db, get_current_user
 from app.models.character import Character
 from app.models.location import Location
-from app.models.enums import CHARACTER_CLASS as DB_CHARACTER_CLASS
 from app.schemas.character import (
     CharacterCreateRequest,
     CharacterResponse,
@@ -1385,115 +1389,86 @@ router = APIRouter(prefix="/character", tags=["Character"])
 @router.post("/create", status_code=status.HTTP_201_CREATED)
 async def create_character_endpoint(
     request: CharacterCreateRequest,
-    current_user = Depends(get_current_user),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> CharacterResponse:
-    """Создание нового персонажа."""
-    result = await db.execute(
-        select(Character).where(Character.user_id == current_user.id)
-    )
+    result = await db.execute(select(Character).where(Character.user_id == current_user.id))
     if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="У вас уже есть персонаж"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="У вас уже есть персонаж")
     
     character = await create_character(db, str(current_user.id), request)
     await db.commit()
     await db.refresh(character)
     
-    location_result = await db.execute(
-        select(Location).where(Location.id == character.current_location_id)
-    )
+    location_result = await db.execute(select(Location).where(Location.id == character.current_location_id))
     location = location_result.scalar_one_or_none()
     
+    stats_resp, hp_max, mana_max, stamina_max = await calculate_character_stats(db, character)
+    
     return CharacterResponse(
-        id=character.id,
-        name=character.name,
+        id=character.id, name=character.name,
         character_class=CharacterClass(character.character_class),
-        level=character.level,
-        experience=character.experience,
+        level=character.level, experience=character.experience,
         status=character.status,
         current_location_id=character.current_location_id,
         current_location_name=location.name if location else None,
-        stats=calculate_character_stats(character),
-        resources=calculate_character_resources(character),
-        created_at=character.created_at,
-        updated_at=character.updated_at,
+        stats=stats_resp,
+        resources=calculate_character_resources(character, hp_max, mana_max, stamina_max),
+        created_at=character.created_at, updated_at=character.updated_at,
     )
 
 @router.get("/", response_model=CharacterResponse)
 async def get_character(
-    current_user = Depends(get_current_user),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> CharacterResponse:
-    """Получение полного состояния персонажа."""
-    result = await db.execute(
-        select(Character).where(Character.user_id == current_user.id)
-    )
+    result = await db.execute(select(Character).where(Character.user_id == current_user.id))
     character = result.scalar_one_or_none()
     
     if not character:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Персонаж не найден. Создайте персонажа."
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Персонаж не найден. Создайте персонажа.")
     
-    location_result = await db.execute(
-        select(Location).where(Location.id == character.current_location_id)
-    )
+    location_result = await db.execute(select(Location).where(Location.id == character.current_location_id))
     location = location_result.scalar_one_or_none()
     
+    stats_resp, hp_max, mana_max, stamina_max = await calculate_character_stats(db, character)
+    
     return CharacterResponse(
-        id=character.id,
-        name=character.name,
+        id=character.id, name=character.name,
         character_class=CharacterClass(character.character_class),
-        level=character.level,
-        experience=character.experience,
+        level=character.level, experience=character.experience,
         status=character.status,
         current_location_id=character.current_location_id,
         current_location_name=location.name if location else None,
-        stats=calculate_character_stats(character),
-        resources=calculate_character_resources(character),
-        created_at=character.created_at,
-        updated_at=character.updated_at,
+        stats=stats_resp,
+        resources=calculate_character_resources(character, hp_max, mana_max, stamina_max),
+        created_at=character.created_at, updated_at=character.updated_at,
     )
 
 @router.get("/stats", response_model=CharacterStatsResponse)
 async def get_character_stats(
-    current_user = Depends(get_current_user),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> CharacterStatsResponse:
-    """Получение характеристик персонажа."""
-    result = await db.execute(
-        select(Character).where(Character.user_id == current_user.id)
-    )
+    result = await db.execute(select(Character).where(Character.user_id == current_user.id))
     character = result.scalar_one_or_none()
     
     if not character:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Персонаж не найден"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Персонаж не найден")
     
-    return calculate_character_stats(character)
+    stats_resp, _, _, _ = await calculate_character_stats(db, character)
+    return stats_resp
 
 @router.post("/levelup", response_model=LevelUpResponse)
 async def level_up_character(
-    current_user = Depends(get_current_user),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> LevelUpResponse:
-    """Обработка повышения уровня персонажа."""
-    result = await db.execute(
-        select(Character).where(Character.user_id == current_user.id)
-    )
+    result = await db.execute(select(Character).where(Character.user_id == current_user.id))
     character = result.scalar_one_or_none()
     
     if not character:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Персонаж не найден"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Персонаж не найден")
     
     leveled_up, new_level = check_level_up(character.experience, character.level)
     
@@ -1505,17 +1480,13 @@ async def level_up_character(
             detail=f"Недостаточно опыта. Нужно ещё {next_xp - current_xp_for_level} XP"
         )
     
-    old_level = character.level
     character.level = new_level
     stats_increased = await apply_level_up(character)
-    
     await db.commit()
     
     return LevelUpResponse(
-        level=new_level,
-        new_experience=character.experience,
-        stats_increased=stats_increased,
-        resources_restored=True,
+        level=new_level, new_experience=character.experience,
+        stats_increased=stats_increased, resources_restored=True,
         message=f"Поздравляем! Вы достигли {new_level} уровня!"
     )
 
@@ -1708,7 +1679,106 @@ async def combat_action_endpoint(
 
 
 
-### 22. `backend/app/api/v1/locations.py`
+### 22. `backend/app/api/v1/inventory.py`
+
+**Размер:** 5.1 KB
+
+**Язык:** `python`
+
+
+
+```python
+"""Эндпоинты инвентаря и экипировки."""
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.api.deps import get_db, get_current_user
+from app.models.character import Character
+from app.schemas.inventory import InventoryFullResponse, EquipRequest, UnequipRequest, UseItemRequest
+from app.services.inventory_service import (
+    get_inventory_full, equip_item, unequip_item, use_item, reduce_item_durability, expand_inventory
+)
+from app.services.combat_service import get_active_combat
+
+router = APIRouter(prefix="/inventory", tags=["Inventory & Equipment"])
+
+@router.get("/", response_model=InventoryFullResponse)
+async def get_inventory(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """8.1 Получение состояния инвентаря и экипировки."""
+    char = (await db.execute(select(Character).where(Character.user_id == current_user.id))).scalar_one_or_none()
+    if not char:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Персонаж не найден")
+    return await get_inventory_full(db, str(char.id))
+
+@router.post("/equip", status_code=status.HTTP_200_OK)
+async def equip_item_endpoint(request: EquipRequest, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """8.2 Экипировка предмета."""
+    char = (await db.execute(select(Character).where(Character.user_id == current_user.id))).scalar_one_or_none()
+    if not char:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Персонаж не найден")
+    result = await equip_item(db, str(char.id), str(request.inventory_id))
+    await db.commit()
+    return result
+
+@router.post("/unequip", status_code=status.HTTP_200_OK)
+async def unequip_item_endpoint(request: UnequipRequest, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """8.2 Снятие предмета."""
+    char = (await db.execute(select(Character).where(Character.user_id == current_user.id))).scalar_one_or_none()
+    if not char:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Персонаж не найден")
+    result = await unequip_item(db, str(char.id), request.slot.value)
+    await db.commit()
+    return result
+
+@router.post("/use", status_code=status.HTTP_200_OK)
+async def use_item_endpoint(request: UseItemRequest, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """8.3 Использование расходника (валидация боя/вне боя)."""
+    char = (await db.execute(select(Character).where(Character.user_id == current_user.id))).scalar_one_or_none()
+    if not char:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Персонаж не найден")
+    
+    active_combat = await get_active_combat(db, str(char.id))
+    in_combat = active_combat is not None and active_combat.is_active
+    
+    result = await use_item(db, str(char.id), str(request.inventory_id), in_combat=in_combat, target_id=request.target_id)
+    await db.commit()
+    return result
+
+@router.post("/repair", status_code=status.HTTP_200_OK)
+async def repair_item_endpoint(inventory_id: str, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """8.4 Ремонт предмета (восстановление прочности)."""
+    char = (await db.execute(select(Character).where(Character.user_id == current_user.id))).scalar_one_or_none()
+    if not char:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Персонаж не найден")
+    
+    inv = (await db.execute(select(Inventory).where(Inventory.id == inventory_id, Inventory.character_id == char.id))).scalar_one_or_none()
+    if not inv or inv.durability is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Предмет не найден или не имеет прочности")
+    
+    repair_cost = max(1, (inv.item.max_durability - inv.durability) // 10)
+    if char.gold < repair_cost:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Недостаточно золота (нужно {repair_cost})")
+    
+    char.gold -= repair_cost
+    inv.durability = inv.item.max_durability
+    await db.commit()
+    return {"message": f"Предмет отремонтирован за {repair_cost} золота", "durability": inv.durability}
+
+@router.post("/expand", status_code=status.HTTP_200_OK)
+async def expand_inventory_endpoint(bag_inventory_id: str, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """8.5 Активация сумки для расширения инвентаря."""
+    char = (await db.execute(select(Character).where(Character.user_id == current_user.id))).scalar_one_or_none()
+    if not char:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Персонаж не найден")
+    result = await expand_inventory(db, str(char.id), bag_inventory_id)
+    await db.commit()
+    return result
+
+```
+
+
+
+### 23. `backend/app/api/v1/locations.py`
 
 **Размер:** 2.7 KB
 
@@ -1809,9 +1879,9 @@ async def move_to_location(
 
 
 
-### 23. `backend/app/api/v1/router.py`
+### 24. `backend/app/api/v1/router.py`
 
-**Размер:** 0.4 KB
+**Размер:** 0.5 KB
 
 **Язык:** `python`
 
@@ -1823,18 +1893,20 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.character import router as character_router
 from app.api.v1.combat import router as combat_router
 from app.api.v1.locations import router as locations_router
+from app.api.v1.inventory import router as inventory_router
 
 v1_router = APIRouter()
 v1_router.include_router(auth_router)
 v1_router.include_router(character_router)
 v1_router.include_router(combat_router)
 v1_router.include_router(locations_router)
+v1_router.include_router(inventory_router)
 
 ```
 
 
 
-### 24. `backend/app/config.py`
+### 25. `backend/app/config.py`
 
 **Размер:** 0.6 KB
 
@@ -1872,7 +1944,7 @@ settings = Settings()
 
 
 
-### 25. `backend/app/core/__init__.py`
+### 26. `backend/app/core/__init__.py`
 
 **Размер:** 0.0 KB
 
@@ -1887,7 +1959,7 @@ settings = Settings()
 
 
 
-### 26. `backend/app/core/security.py`
+### 27. `backend/app/core/security.py`
 
 **Размер:** 1.5 KB
 
@@ -1937,7 +2009,7 @@ def decode_token(token: str) -> TokenPayload:
 
 
 
-### 27. `backend/app/core/vk_auth.py`
+### 28. `backend/app/core/vk_auth.py`
 
 **Размер:** 1.2 KB
 
@@ -1979,7 +2051,7 @@ def validate_vk_init_data(init_data: str, secret: str) -> dict:
 
 
 
-### 28. `backend/app/db/__init__.py`
+### 29. `backend/app/db/__init__.py`
 
 **Размер:** 0.0 KB
 
@@ -1993,7 +2065,7 @@ def validate_vk_init_data(init_data: str, secret: str) -> dict:
 
 
 
-### 29. `backend/app/db/base.py`
+### 30. `backend/app/db/base.py`
 
 **Размер:** 0.8 KB
 
@@ -2030,7 +2102,7 @@ class TimestampMixin:
 
 
 
-### 30. `backend/app/db/session.py`
+### 31. `backend/app/db/session.py`
 
 **Размер:** 0.3 KB
 
@@ -2054,7 +2126,7 @@ async_session = async_sessionmaker(
 
 
 
-### 31. `backend/app/main.py`
+### 32. `backend/app/main.py`
 
 **Размер:** 1.8 KB
 
@@ -2125,7 +2197,7 @@ async def health_check():
 
 
 
-### 32. `backend/app/models/__init__.py`
+### 33. `backend/app/models/__init__.py`
 
 **Размер:** 0.7 KB
 
@@ -2157,7 +2229,7 @@ __all__ = [
 
 
 
-### 33. `backend/app/models/character.py`
+### 34. `backend/app/models/character.py`
 
 **Размер:** 3.2 KB
 
@@ -2225,7 +2297,7 @@ class Character(Base, TimestampMixin):
 
 
 
-### 34. `backend/app/models/combat.py`
+### 35. `backend/app/models/combat.py`
 
 **Размер:** 2.9 KB
 
@@ -2291,7 +2363,7 @@ class CombatSession(Base, TimestampMixin):
 
 
 
-### 35. `backend/app/models/enums.py`
+### 36. `backend/app/models/enums.py`
 
 **Размер:** 1.2 KB
 
@@ -2341,7 +2413,7 @@ CHARACTER_STATUS = pg_enum('character_status',
 
 
 
-### 36. `backend/app/models/inventory.py`
+### 37. `backend/app/models/inventory.py`
 
 **Размер:** 1.9 KB
 
@@ -2392,7 +2464,7 @@ class Equipment(Base, TimestampMixin):
 
 
 
-### 37. `backend/app/models/item.py`
+### 38. `backend/app/models/item.py`
 
 **Размер:** 1.8 KB
 
@@ -2436,7 +2508,7 @@ class Item(Base, TimestampMixin):
 
 
 
-### 38. `backend/app/models/location.py`
+### 39. `backend/app/models/location.py`
 
 **Размер:** 2.3 KB
 
@@ -2495,7 +2567,7 @@ class LocationConnection(Base):
 
 
 
-### 39. `backend/app/models/memory.py`
+### 40. `backend/app/models/memory.py`
 
 **Размер:** 1.2 KB
 
@@ -2534,7 +2606,7 @@ class CharacterMemory(Base, TimestampMixin):
 
 
 
-### 40. `backend/app/models/quest.py`
+### 41. `backend/app/models/quest.py`
 
 **Размер:** 1.8 KB
 
@@ -2583,7 +2655,7 @@ class CharacterQuest(Base, TimestampMixin):
 
 
 
-### 41. `backend/app/models/shop.py`
+### 42. `backend/app/models/shop.py`
 
 **Размер:** 1.9 KB
 
@@ -2636,7 +2708,7 @@ class Transaction(Base, TimestampMixin):
 
 
 
-### 42. `backend/app/models/system.py`
+### 43. `backend/app/models/system.py`
 
 **Размер:** 1.7 KB
 
@@ -2686,7 +2758,7 @@ class GameLog(Base):
 
 
 
-### 43. `backend/app/models/user.py`
+### 44. `backend/app/models/user.py`
 
 **Размер:** 0.7 KB
 
@@ -2716,7 +2788,7 @@ class User(Base, TimestampMixin):
 
 
 
-### 44. `backend/app/schemas/__init__.py`
+### 45. `backend/app/schemas/__init__.py`
 
 **Размер:** 0.0 KB
 
@@ -2731,7 +2803,7 @@ class User(Base, TimestampMixin):
 
 
 
-### 45. `backend/app/schemas/auth.py`
+### 46. `backend/app/schemas/auth.py`
 
 **Размер:** 0.7 KB
 
@@ -2774,7 +2846,7 @@ class UserResponse(BaseModel):
 
 
 
-### 46. `backend/app/schemas/character.py`
+### 47. `backend/app/schemas/character.py`
 
 **Размер:** 2.1 KB
 
@@ -2861,7 +2933,7 @@ class LevelUpResponse(BaseModel):
 
 
 
-### 47. `backend/app/schemas/combat.py`
+### 48. `backend/app/schemas/combat.py`
 
 **Размер:** 2.4 KB
 
@@ -2944,7 +3016,7 @@ class CombatStartRequest(BaseModel):
 
 
 
-### 48. `backend/app/schemas/enums.py`
+### 49. `backend/app/schemas/enums.py`
 
 **Размер:** 1.2 KB
 
@@ -3012,7 +3084,57 @@ class EquipmentSlot(str, enum.Enum):
 
 
 
-### 49. `backend/app/schemas/location.py`
+### 50. `backend/app/schemas/inventory.py`
+
+**Размер:** 1.3 KB
+
+**Язык:** `python`
+
+
+
+```python
+"""Схемы для инвентаря и экипировки."""
+from typing import Optional, List, Dict, Any
+import uuid
+from pydantic import BaseModel, Field
+from app.schemas.enums import ItemType, ItemRarity, EquipmentSlot
+
+class InventoryItemResponse(BaseModel):
+    id: uuid.UUID
+    item_id: uuid.UUID
+    name: str
+    description: Optional[str] = None
+    item_type: ItemType
+    rarity: ItemRarity
+    quantity: int
+    durability: Optional[int] = None
+    max_durability: Optional[int] = None
+    is_equipped: bool = False
+    slot: Optional[EquipmentSlot] = None
+    model_config = {"from_attributes": True}
+
+class InventoryFullResponse(BaseModel):
+    used_slots: int
+    max_slots: int
+    items: List[InventoryItemResponse]
+    equipment: Dict[str, Optional[InventoryItemResponse]] = Field(default_factory=dict)
+    model_config = {"from_attributes": True}
+
+class EquipRequest(BaseModel):
+    inventory_id: uuid.UUID = Field(..., description="ID записи в инвентаре")
+
+class UnequipRequest(BaseModel):
+    slot: EquipmentSlot = Field(..., description="Слот экипировки")
+
+class UseItemRequest(BaseModel):
+    inventory_id: uuid.UUID = Field(..., description="ID записи в инвентаре")
+    target_id: Optional[uuid.UUID] = Field(None, description="ID цели")
+
+```
+
+
+
+### 51. `backend/app/schemas/location.py`
 
 **Размер:** 1.3 KB
 
@@ -3076,9 +3198,9 @@ class MoveResponse(BaseModel):
 
 
 
-### 50. `backend/app/services/character_service.py`
+### 52. `backend/app/services/character_service.py`
 
-**Размер:** 6.5 KB
+**Размер:** 5.4 KB
 
 **Язык:** `python`
 
@@ -3091,13 +3213,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
 from app.models.character import Character
 from app.models.location import Location
-from app.models.enums import CHARACTER_CLASS, CHARACTER_STATUS
-from app.utils.constants import CLASS_STARTING_STATS, STARTING_LOCATION_NAME, XP_THRESHOLDS, LEVEL_UP_BONUSES, MAX_FATIGUE, FATIGUE_ACTION_BLOCK
+from app.models.enums import CHARACTER_STATUS
+from app.utils.constants import CLASS_STARTING_STATS, STARTING_LOCATION_NAME, LEVEL_UP_BONUSES
 from app.utils.calculations import calculate_modifier, clamp_value, check_level_up, calculate_effective_stat
 from app.schemas.character import CharacterCreateRequest, CharacterStatsResponse, CharacterResourcesResponse
+from app.services.inventory_service import get_equipped_items, calculate_equipment_modifiers
 
 async def validate_character_name(session: AsyncSession, name: str, exclude_id: str = None) -> bool:
-    """Проверяет уникальность имени персонажа."""
     stmt = select(Character).where(Character.name == name)
     if exclude_id:
         stmt = stmt.where(Character.id != exclude_id)
@@ -3105,161 +3227,103 @@ async def validate_character_name(session: AsyncSession, name: str, exclude_id: 
     return result.scalar_one_or_none() is None
 
 async def get_starting_location(session: AsyncSession) -> Location:
-    """Получает стартовую локацию по имени."""
-    result = await session.execute(
-        select(Location).where(Location.name == STARTING_LOCATION_NAME)
-    )
+    result = await session.execute(select(Location).where(Location.name == STARTING_LOCATION_NAME))
     location = result.scalar_one_or_none()
     if not location:
         raise HTTPException(status_code=500, detail="Starting location not found")
     return location
 
-def calculate_character_stats(character: Character) -> CharacterStatsResponse:
-    """Рассчитывает характеристики с модификаторами."""
-    # Базовые значения
-    strength = character.strength
-    agility = character.agility
-    intelligence = character.intelligence
+async def calculate_character_stats(session: AsyncSession, character: Character) -> tuple[CharacterStatsResponse, int, int, int]:
+    """Рассчитывает характеристики с учётом экипировки. Возвращает (stats, hp_max, mana_max, stamina_max)."""
+    equipped = await get_equipped_items(session, str(character.id))
+    eq_mods = calculate_equipment_modifiers(equipped)
     
-    # Модификаторы
+    strength = character.strength + int(eq_mods.get("strength", 0))
+    agility = character.agility + int(eq_mods.get("agility", 0))
+    intelligence = character.intelligence + int(eq_mods.get("intelligence", 0))
+    
     strength_mod = calculate_modifier(strength)
     agility_mod = calculate_modifier(agility)
     intelligence_mod = calculate_modifier(intelligence)
     
-    # Эффективные (пока без экипировки - будет добавлено позже)
-    strength_eff = calculate_effective_stat(strength)
-    agility_eff = calculate_effective_stat(agility)
-    intelligence_eff = calculate_effective_stat(intelligence)
+    hp_max = character.hp_max + int(eq_mods.get("hp_max", 0))
+    mana_max = character.mana_max + int(eq_mods.get("mana_max", 0))
+    stamina_max = character.stamina_max + int(eq_mods.get("stamina_max", 0))
     
     return CharacterStatsResponse(
-        strength=strength,
-        agility=agility,
-        intelligence=intelligence,
-        strength_mod=strength_mod,
-        agility_mod=agility_mod,
-        intelligence_mod=intelligence_mod,
-        strength_effective=strength_eff,
-        agility_effective=agility_eff,
-        intelligence_effective=intelligence_eff,
-    )
+        strength=character.strength, agility=character.agility, intelligence=character.intelligence,
+        strength_mod=strength_mod, agility_mod=agility_mod, intelligence_mod=intelligence_mod,
+        strength_effective=strength, agility_effective=agility, intelligence_effective=intelligence,
+    ), hp_max, mana_max, stamina_max
 
-def calculate_character_resources(character: Character, inventory_used: int = None) -> CharacterResourcesResponse:
-    """Рассчитывает ресурсы персонажа."""
+def calculate_character_resources(character: Character, hp_max: int, mana_max: int, stamina_max: int, inventory_used: int = None) -> CharacterResourcesResponse:
     return CharacterResourcesResponse(
-        hp_current=character.hp_current,
-        hp_max=character.hp_max,
-        mana_current=character.mana_current,
-        mana_max=character.mana_max,
-        stamina_current=character.stamina_current,
-        stamina_max=character.stamina_max,
-        fatigue=character.fatigue,
-        gold=character.gold,
-        inventory_slots=character.inventory_slots,
-        inventory_slots_used=inventory_used,
+        hp_current=character.hp_current, hp_max=hp_max,
+        mana_current=character.mana_current, mana_max=mana_max,
+        stamina_current=character.stamina_current, stamina_max=stamina_max,
+        fatigue=character.fatigue, gold=character.gold,
+        inventory_slots=character.inventory_slots, inventory_slots_used=inventory_used,
     )
 
 def check_action_allowed(character: Character) -> tuple[bool, str]:
-    """Проверяет, может ли персонаж выполнять активные действия."""
-    if character.fatigue >= FATIGUE_ACTION_BLOCK:
+    if character.fatigue >= 80:
         return False, f"Слишком высокая усталость ({character.fatigue}%). Отдохните."
     if character.hp_current <= 0:
         return False, "Персонаж без сознания."
     return True, "OK"
 
-async def create_character(
-    session: AsyncSession,
-    user_id: str,
-    request: CharacterCreateRequest
-) -> Character:
-    """Создаёт нового персонажа."""
-    # Проверка уникальности имени
+async def create_character(session: AsyncSession, user_id: str, request: CharacterCreateRequest) -> Character:
     if not await validate_character_name(session, request.name):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Персонаж с таким именем уже существует"
-        )
-    
-    # Получение стартовой локации
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Персонаж с таким именем уже существует")
     starting_location = await get_starting_location(session)
-    
-    # Получение стартовых характеристик класса
     class_stats = CLASS_STARTING_STATS.get(request.character_class)
     if not class_stats:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Неверный класс персонажа"
-        )
-    
-    # Создание персонажа
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Неверный класс персонажа")
     character = Character(
-        user_id=user_id,
-        name=request.name,
-        character_class=request.character_class,
+        user_id=user_id, name=request.name, character_class=request.character_class,
         current_location_id=starting_location.id,
-        # Характеристики класса
-        strength=class_stats["strength"],
-        agility=class_stats["agility"],
-        intelligence=class_stats["intelligence"],
-        # Ресурсы
-        hp_current=class_stats["hp_max"],
-        hp_max=class_stats["hp_max"],
-        mana_current=class_stats["mana_max"],
-        mana_max=class_stats["mana_max"],
-        stamina_current=class_stats["stamina_max"],
-        stamina_max=class_stats["stamina_max"],
-        # Остальное
-        level=1,
-        experience=0,
-        status='alive',
-        fatigue=0,
-        gold=0,
-        inventory_slots=10,
+        strength=class_stats["strength"], agility=class_stats["agility"], intelligence=class_stats["intelligence"],
+        hp_current=class_stats["hp_max"], hp_max=class_stats["hp_max"],
+        mana_current=class_stats["mana_max"], mana_max=class_stats["mana_max"],
+        stamina_current=class_stats["stamina_max"], stamina_max=class_stats["stamina_max"],
+        level=1, experience=0, status="alive", fatigue=0, gold=0, inventory_slots=10,
     )
-    
     session.add(character)
     await session.flush()
     await session.refresh(character)
-    
     return character
 
 async def apply_level_up(character: Character) -> dict:
-    """Применяет повышение уровня персонажа."""
-    from app.utils.constants import LEVEL_UP_BONUSES
-    
     stats_increased = {}
-    
-    # Увеличение характеристик
     for stat, bonus in LEVEL_UP_BONUSES.items():
         if hasattr(character, stat):
             old_value = getattr(character, stat)
             new_value = old_value + bonus
             setattr(character, stat, new_value)
             stats_increased[stat] = {"old": old_value, "new": new_value}
-    
-    # Полное восстановление ресурсов
     character.hp_current = character.hp_max
     character.mana_current = character.mana_max
     character.stamina_current = character.stamina_max
     character.fatigue = 0
-    
     return stats_increased
 
 ```
 
 
 
-### 51. `backend/app/services/combat_service.py`
+### 53. `backend/app/services/combat_service.py`
 
-**Размер:** 17.0 KB
+**Размер:** 18.9 KB
 
 **Язык:** `python`
 
 
 
 ```python
-"""Бизнес-логика боевой системы."""
+"""Бизнес-логика боевой системы с интеграцией экипировки."""
 import asyncio
 import random
+import logging
 from datetime import datetime
 from typing import Optional
 
@@ -3276,14 +3340,18 @@ from app.schemas.combat import (
     CombatActionResult, CombatStateResponse, CombatLogEntry
 )
 from app.services.character_service import apply_level_up
+from app.services.inventory_service import get_equipped_items, calculate_equipment_modifiers
 from app.utils.calculations import calculate_modifier, clamp_value, check_level_up
 from app.utils.dice import roll_d20, roll_damage, check_success, calculate_dc
+
+logger = logging.getLogger(__name__)
 
 # Константы боя
 BASE_AC = 10  # Базовый класс брони
 BASE_DC = 10  # Базовая сложность проверки
 CRIT_MULTIPLIER = 2  # Множитель урона при крите
 FLEE_DC_BASE = 15  # Базовая сложность побега
+BROKEN_WEAPON_PENALTY = 0.5  # Штраф урона для сломанного оружия
 
 
 async def get_active_combat(session: AsyncSession, character_id: str) -> Optional[CombatSession]:
@@ -3387,9 +3455,42 @@ def calculate_enemy_attack_dc(enemy_stats: dict) -> int:
     return BASE_DC + calculate_modifier(enemy_stats.get("agility", 10))
 
 
-def calculate_player_armor(character: Character) -> int:
-    """Рассчитывает броню игрока (упрощённо, без экипировки)."""
-    return 0
+async def calculate_player_armor(session: AsyncSession, character_id: str) -> int:
+    """8.4 Рассчитывает броню игрока на основе экипированной брони/аксессуаров."""
+    equipped = await get_equipped_items(session, character_id)
+    mods = calculate_equipment_modifiers(equipped)
+    return int(mods.get("armor", 0))
+
+
+async def calculate_player_weapon_damage(
+    session: AsyncSession, 
+    character: Character, 
+    is_critical: bool = False
+) -> tuple[int, int]:
+    """8.4 Возвращает (min_dmg, max_dmg) с учётом экипированного оружия и прочности."""
+    equipped = await get_equipped_items(session, str(character.id))
+    mods = calculate_equipment_modifiers(equipped)
+    
+    # Базовый урон от силы
+    base_min = character.strength // 2
+    base_max = character.strength
+    
+    # Модификаторы от оружия
+    weapon_dmg_min = int(mods.get("damage_min", 0))
+    weapon_dmg_max = int(mods.get("damage_max", 0))
+    
+    total_min = base_min + weapon_dmg_min
+    total_max = base_max + weapon_dmg_max
+    
+    # Проверка на сломанное оружие (штраф к урону)
+    for slot, eq in equipped.items():
+        if slot == "weapon" and eq.inventory.durability is not None:
+            if eq.inventory.durability <= 0:
+                total_min = int(total_min * BROKEN_WEAPON_PENALTY)
+                total_max = int(total_max * BROKEN_WEAPON_PENALTY)
+                break
+    
+    return max(0, total_min), max(total_min, total_max)
 
 
 def calculate_damage(
@@ -3399,7 +3500,7 @@ def calculate_damage(
     max_dmg: int,
     is_critical: bool = False
 ) -> int:
-    """Рассчитывает итоговый урон."""
+    """Рассчитывает итоговый урон с учётом брони и крита."""
     str_mod = calculate_modifier(attacker_str)
     base_dmg = roll_damage(min_dmg, max_dmg, str_mod, is_critical)
     return max(0, base_dmg - defender_armor)
@@ -3441,7 +3542,7 @@ async def generate_combat_narrative(
         if cached_response:
             return cached_response.strip()
         
-        # Запрос к ИИ с таймаутом (чтобы не ждать долго)
+        # Запрос к ИИ с таймаутом
         response = await asyncio.wait_for(
             client.generate(messages, temperature=0.8, max_tokens=100),
             timeout=3.0
@@ -3451,8 +3552,8 @@ async def generate_combat_narrative(
         await cache.set(prompt_hash, response.strip())
         return response.strip()
         
-    except Exception:
-        # В случае ошибки возвращаем стандартное описание (fallback)
+    except Exception as e:
+        logger.warning(f"AI narrative generation failed: {e}")
         return f"{result_desc} (Урон: {damage if damage else 0})"
 
 
@@ -3461,7 +3562,7 @@ async def process_player_attack(
     combat: CombatSession,
     character: Character
 ) -> CombatActionResult:
-    """Обрабатывает атаку игрока."""
+    """Обрабатывает атаку игрока с учётом экипировки."""
     enemy_stats = combat.enemy_stats
     
     # Бросок атаки
@@ -3471,8 +3572,7 @@ async def process_player_attack(
     
     # Проверка попадания
     if attack_roll == 1:
-        # Критический промах
-        log_entry = f"Вы промахнулись критически!"
+        log_entry = "Вы промахнулись критически!"
         ai_description = await generate_combat_narrative(
             character=character,
             enemy_name=combat.enemy_name,
@@ -3498,11 +3598,11 @@ async def process_player_attack(
         )
     
     if is_crit:
-        log_entry = f"Критический удар! "
+        log_entry = "Критический удар! "
     elif check_success(attack_roll, attack_dc):
-        log_entry = f"Вы попали! "
+        log_entry = "Вы попали! "
     else:
-        log_entry = f"Вы промахнулись. "
+        log_entry = "Вы промахнулись. "
         ai_description = await generate_combat_narrative(
             character=character,
             enemy_name=combat.enemy_name,
@@ -3522,12 +3622,15 @@ async def process_player_attack(
         await session.flush()
         return CombatActionResult(success=True, message=log_entry, is_miss=True)
     
-    # Расчёт урона
+    # Расчёт урона с учётом экипировки
+    min_dmg, max_dmg = await calculate_player_weapon_damage(session, character, is_crit)
+    enemy_armor = enemy_stats.get("armor", 0)
+    
     damage = calculate_damage(
         attacker_str=character.strength,
-        defender_armor=enemy_stats.get("armor", 0),
-        min_dmg=character.strength // 2,
-        max_dmg=character.strength,
+        defender_armor=enemy_armor,
+        min_dmg=min_dmg,
+        max_dmg=max_dmg,
         is_critical=is_crit
     )
     
@@ -3547,7 +3650,6 @@ async def process_player_attack(
         enemy_max=combat.enemy_hp_max
     )
     
-    # Добавляем запись в лог с ИИ описанием
     combat.combat_log.append(CombatLogEntry(
         turn=combat.current_turn,
         actor="player",
@@ -3575,10 +3677,10 @@ async def process_enemy_turn(
     combat: CombatSession,
     character: Character
 ) -> CombatActionResult:
-    """Обрабатывает ход врага."""
+    """Обрабатывает ход врага с учётом брони персонажа из экипировки."""
     enemy_stats = combat.enemy_stats
     
-    # Простая логика: враг всегда атакует
+    # Логика врага: всегда атакует
     attack_mod = calculate_modifier(enemy_stats.get("strength", 10))
     attack_roll, is_crit = roll_d20(attack_mod)
     attack_dc = calculate_player_attack_dc(character)
@@ -3629,10 +3731,12 @@ async def process_enemy_turn(
         await session.flush()
         return CombatActionResult(success=True, message=log_entry, is_miss=True)
     
-    # Расчёт урона
+    # Расчёт урона с учётом брони из экипировки
+    player_armor = await calculate_player_armor(session, str(character.id))
+    
     damage = calculate_damage(
         attacker_str=enemy_stats.get("strength", 10),
-        defender_armor=calculate_player_armor(character),
+        defender_armor=player_armor,
         min_dmg=enemy_stats.get("damage_min", 1),
         max_dmg=enemy_stats.get("damage_max", 5),
         is_critical=is_crit
@@ -3643,7 +3747,7 @@ async def process_enemy_turn(
     
     log_entry += f"Урон: {damage}. Ваше HP: {character.hp_current}/{character.hp_max}"
     
-    # Генерация ИИ описания атаки врага
+    # Генерация ИИ описания
     ai_description = await generate_combat_narrative(
         character=character,
         enemy_name=combat.enemy_name,
@@ -3771,7 +3875,258 @@ async def get_combat_state(
 
 
 
-### 52. `backend/app/services/location_service.py`
+### 54. `backend/app/services/inventory_service.py`
+
+**Размер:** 12.0 KB
+
+**Язык:** `python`
+
+
+
+```python
+"""Бизнес-логика инвентаря и экипировки (с фиксом UUID)."""
+import uuid
+import logging
+from typing import Dict, Any, List, Optional, Tuple
+from uuid import UUID
+
+from sqlalchemy import select, and_, func, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+from fastapi import HTTPException, status
+
+from app.models.inventory import Inventory, Equipment
+from app.models.item import Item
+from app.models.character import Character
+from app.schemas.inventory import InventoryItemResponse, InventoryFullResponse
+from app.utils.calculations import clamp_value
+
+logger = logging.getLogger(__name__)
+BROKEN_ITEM_PENALTY = 0.5
+LOW_DURABILITY_THRESHOLD = 0.3
+
+def _to_uuid(val: str | UUID) -> UUID:
+    """Конвертирует строку или UUID в объект UUID."""
+    return val if isinstance(val, UUID) else UUID(val)
+
+async def get_equipped_items(session: AsyncSession, character_id: str | UUID) -> Dict[str, Equipment]:
+    char_uuid = _to_uuid(character_id)
+    stmt = (
+        select(Equipment)
+        .options(selectinload(Equipment.inventory).selectinload(Inventory.item))
+        .where(Equipment.character_id == char_uuid)
+    )
+    result = await session.execute(stmt)
+    equipped_list = result.scalars().all()
+    return {eq.slot: eq for eq in equipped_list}
+
+def calculate_equipment_modifiers(equipped: Dict[str, Equipment]) -> Dict[str, float]:
+    total_mods: Dict[str, float] = {}
+    for slot, eq in equipped.items():
+        item = eq.inventory.item
+        durability_mult = 1.0
+        if eq.inventory.durability is not None and item.max_durability > 0:
+            if eq.inventory.durability <= 0:
+                durability_mult = BROKEN_ITEM_PENALTY
+            elif eq.inventory.durability < item.max_durability * LOW_DURABILITY_THRESHOLD:
+                durability_mult = 0.75
+        for key, val in item.modifiers.items():
+            if isinstance(val, (int, float)):
+                total_mods[key] = total_mods.get(key, 0) + (val * durability_mult)
+    return total_mods
+
+async def get_inventory_full(session: AsyncSession, character_id: str | UUID) -> InventoryFullResponse:
+    char_uuid = _to_uuid(character_id)
+    inv_stmt = select(Inventory).options(selectinload(Inventory.item)).where(Inventory.character_id == char_uuid)
+    inv_result = await session.execute(inv_stmt)
+    inv_items = inv_result.scalars().all()
+    
+    equipped = await get_equipped_items(session, char_uuid)
+    equipped_inv_ids = {eq.inventory_id for eq in equipped.values()}
+    
+    char_res = await session.execute(select(Character).where(Character.id == char_uuid))
+    character = char_res.scalar_one()
+    
+    base_slots = character.inventory_slots
+    bag_bonus = sum(
+        item.quantity * item.item.modifiers.get("slot_bonus", 0)
+        for item in inv_items
+        if item.item.item_type == "bag"
+    )
+    max_slots = base_slots + bag_bonus
+    
+    items_response = [
+        InventoryItemResponse(
+            id=item.id, item_id=item.item_id, name=item.item.name,
+            description=item.item.description, item_type=item.item.item_type,
+            rarity=item.item.rarity, quantity=item.quantity,
+            durability=item.durability,
+            max_durability=item.item.max_durability if item.item.max_durability > 0 else None,
+            is_equipped=item.id in equipped_inv_ids,
+            slot=item.item.slot,
+        )
+        for item in inv_items
+    ]
+    
+    equipment_response = {}
+    for slot_name in ["weapon", "armor", "helmet", "gloves", "boots", "accessory", "ring1", "ring2"]:
+        eq = equipped.get(slot_name)
+        if eq:
+            equipment_response[slot_name] = InventoryItemResponse(
+                id=eq.inventory.id, item_id=eq.inventory.item.id,
+                name=eq.inventory.item.name, description=eq.inventory.item.description,
+                item_type=eq.inventory.item.item_type, rarity=eq.inventory.item.rarity,
+                quantity=1, durability=eq.inventory.durability,
+                max_durability=eq.inventory.item.max_durability if eq.inventory.item.max_durability > 0 else None,
+                is_equipped=True, slot=eq.inventory.item.slot,
+            )
+        else:
+            equipment_response[slot_name] = None
+
+    return InventoryFullResponse(
+        used_slots=len(inv_items), max_slots=max_slots,
+        items=items_response, equipment=equipment_response
+    )
+
+async def equip_item(session: AsyncSession, character_id: str | UUID, inventory_id: str | UUID) -> dict:
+    char_uuid = _to_uuid(character_id)
+    inv_uuid = _to_uuid(inventory_id)
+    
+    char_res = await session.execute(select(Character).where(Character.id == char_uuid))
+    character = char_res.scalar_one_or_none()
+    if not character:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Персонаж не найден")
+    
+    inv_stmt = select(Inventory).options(selectinload(Inventory.item)).where(Inventory.id == inv_uuid)
+    inv_res = await session.execute(inv_stmt)
+    inv_item = inv_res.scalar_one_or_none()
+    
+    if not inv_item or inv_item.character_id != char_uuid:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Предмет не найден")
+    
+    if inv_item.item.item_type == "consumable":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Расходники нельзя экипировать")
+    if not inv_item.item.slot:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="У предмета нет слота экипировки")
+    if inv_item.item.required_level and character.level < inv_item.item.required_level:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Требуется уровень {inv_item.item.required_level}")
+    if inv_item.item.required_class and character.character_class not in inv_item.item.required_class:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Класс не соответствует требованиям")
+    
+    existing = await session.execute(
+        select(Equipment).where(Equipment.character_id == char_uuid, Equipment.slot == inv_item.item.slot)
+    )
+    old_eq = existing.scalar_one_or_none()
+    if old_eq:
+        await session.delete(old_eq)
+    
+    new_eq = Equipment(character_id=char_uuid, slot=inv_item.item.slot, inventory_id=inv_item.id)
+    session.add(new_eq)
+    await session.flush()
+    return {"message": f"Экипировано: {inv_item.item.name}", "slot": inv_item.item.slot}
+
+async def unequip_item(session: AsyncSession, character_id: str | UUID, slot: str) -> dict:
+    char_uuid = _to_uuid(character_id)
+    eq_res = await session.execute(
+        select(Equipment).where(Equipment.character_id == char_uuid, Equipment.slot == slot)
+    )
+    equipment = eq_res.scalar_one_or_none()
+    if not equipment:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Слот пуст")
+    await session.delete(equipment)
+    await session.flush()
+    return {"message": "Предмет снят", "slot": slot}
+
+async def use_item(session: AsyncSession, character_id: str | UUID, inventory_id: str | UUID, in_combat: bool = False, target_id: Optional[str] = None) -> dict:
+    """8.3 Использование расходника с корректной обработкой UUID."""
+    char_uuid = _to_uuid(character_id)
+    inv_uuid = _to_uuid(inventory_id)
+    
+    inv_stmt = select(Inventory).options(selectinload(Inventory.item)).where(Inventory.id == inv_uuid)
+    inv_res = await session.execute(inv_stmt)
+    inv_item = inv_res.scalar_one_or_none()
+    
+    # Ключевой фикс: сравниваем UUID с UUID
+    if not inv_item or inv_item.character_id != char_uuid:
+        logger.warning(f"Item not found: inv_id={inventory_id}, char_id={character_id}, db_char_id={inv_item.character_id if inv_item else None}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Предмет не найден")
+    
+    if inv_item.item.item_type != "consumable":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Можно использовать только расходники")
+    
+    if in_combat and inv_item.item.modifiers.get("combat_use", True) is False:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Этот предмет нельзя использовать в бою")
+    
+    char = (await session.execute(select(Character).where(Character.id == char_uuid))).scalar_one()
+    mods = inv_item.item.modifiers
+    effects_applied = []
+    
+    if "hp_restore" in mods:
+        char.hp_current = clamp_value(char.hp_current + mods["hp_restore"], 0, char.hp_max)
+        effects_applied.append(f"+{mods['hp_restore']} HP")
+    if "mana_restore" in mods:
+        char.mana_current = clamp_value(char.mana_current + mods["mana_restore"], 0, char.mana_max)
+        effects_applied.append(f"+{mods['mana_restore']} MP")
+    if "stamina_restore" in mods:
+        char.stamina_current = clamp_value(char.stamina_current + mods["stamina_restore"], 0, char.stamina_max)
+        effects_applied.append(f"+{mods['stamina_restore']} STA")
+    if "fatigue_reduce" in mods:
+        char.fatigue = clamp_value(char.fatigue - mods["fatigue_reduce"], 0, 100)
+        effects_applied.append(f"-{mods['fatigue_reduce']} Усталость")
+    
+    if not effects_applied:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Предмет не имеет эффектов")
+    
+    # Уменьшение прочности (8.4)
+    if inv_item.durability is not None and inv_item.item.max_durability > 0:
+        inv_item.durability = max(0, inv_item.durability - 1)
+        if inv_item.durability == 0:
+            effects_applied.append("⚠️ Предмет сломан!")
+    
+    # Уменьшение количества или удаление
+    if inv_item.quantity > 1:
+        inv_item.quantity -= 1
+    else:
+        await session.delete(inv_item)
+    
+    await session.flush()
+    return {"message": f"Использовано {inv_item.item.name}: {', '.join(effects_applied)}"}
+
+async def reduce_item_durability(session: AsyncSession, inventory_id: str | UUID, amount: int = 1) -> Optional[Dict]:
+    inv_uuid = _to_uuid(inventory_id)
+    inv_item = (await session.execute(select(Inventory).where(Inventory.id == inv_uuid))).scalar_one_or_none()
+    if not inv_item or inv_item.durability is None:
+        return None
+    inv_item.durability = max(0, inv_item.durability - amount)
+    await session.flush()
+    status = "ok"
+    if inv_item.durability == 0:
+        status = "broken"
+    elif inv_item.durability < inv_item.item.max_durability * LOW_DURABILITY_THRESHOLD:
+        status = "low"
+    return {"inventory_id": str(inv_item.id), "durability": inv_item.durability, "max_durability": inv_item.item.max_durability, "status": status}
+
+async def expand_inventory(session: AsyncSession, character_id: str | UUID, bag_item_id: str | UUID) -> dict:
+    char_uuid = _to_uuid(character_id)
+    bag_uuid = _to_uuid(bag_item_id)
+    char = (await session.execute(select(Character).where(Character.id == char_uuid))).scalar_one_or_none()
+    if not char:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Персонаж не найден")
+    inv = (await session.execute(select(Inventory).where(Inventory.id == bag_uuid, Inventory.character_id == char_uuid))).scalar_one_or_none()
+    if not inv:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Сумка не найдена в инвентаре")
+    if inv.item.item_type != "bag":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Это не сумка")
+    slot_bonus = inv.item.modifiers.get("slot_bonus", 0)
+    if slot_bonus <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Сумка не добавляет слоты")
+    return {"message": f"Сумка '{inv.item.name}' добавляет +{slot_bonus} слотов", "new_max_slots": char.inventory_slots + slot_bonus}
+
+```
+
+
+
+### 55. `backend/app/services/location_service.py`
 
 **Размер:** 7.3 KB
 
@@ -3974,7 +4329,7 @@ async def move_character(
 
 
 
-### 53. `backend/app/utils/calculations.py`
+### 56. `backend/app/utils/calculations.py`
 
 **Размер:** 1.7 KB
 
@@ -4027,7 +4382,7 @@ def calculate_effective_stat(base_stat: int, equipment_bonus: int = 0, buff_bonu
 
 
 
-### 54. `backend/app/utils/constants.py`
+### 57. `backend/app/utils/constants.py`
 
 **Размер:** 2.2 KB
 
@@ -4098,7 +4453,7 @@ REST_TAVERN_RECOVERY = 1.0  # 100%
 
 
 
-### 55. `backend/app/utils/dice.py`
+### 58. `backend/app/utils/dice.py`
 
 **Размер:** 1.4 KB
 
@@ -4153,7 +4508,7 @@ def check_success(roll: int, dc: int) -> bool:
 
 
 
-### 56. `backend/seeds/load_seeds.py`
+### 59. `backend/seeds/load_seeds.py`
 
 **Размер:** 6.0 KB
 
@@ -4265,7 +4620,346 @@ if __name__ == "__main__":
 
 
 
-### 57. `frontend/public/index.html`
+### 60. `fix_stage8.sh`
+
+**Размер:** 15.1 KB
+
+**Язык:** `bash`
+
+
+
+```bash
+#!/bin/bash
+# fix_stage8_imports.sh - Исправление импортов Этапа 8
+
+cd ~/legends-of-elara/backend
+
+echo "🔧 Создаём inventory_service.py..."
+cat > app/services/inventory_service.py << 'INVENTORY_EOF'
+"""Бизнес-логика инвентаря и экипировки."""
+import uuid
+import logging
+from typing import Dict, Any, List, Optional
+
+from sqlalchemy import select, and_, func
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+from fastapi import HTTPException, status
+
+from app.models.inventory import Inventory, Equipment
+from app.models.item import Item
+from app.models.character import Character
+from app.schemas.inventory import InventoryItemResponse, InventoryFullResponse
+from app.utils.calculations import clamp_value
+
+logger = logging.getLogger(__name__)
+BROKEN_ITEM_PENALTY = 0.5
+
+async def get_equipped_items(session: AsyncSession, character_id: str) -> Dict[str, Equipment]:
+    """Загружает экипированные предметы персонажа."""
+    stmt = (
+        select(Equipment)
+        .options(selectinload(Equipment.inventory).selectinload(Inventory.item))
+        .where(Equipment.character_id == character_id)
+    )
+    result = await session.execute(stmt)
+    equipped_list = result.scalars().all()
+    return {eq.slot: eq for eq in equipped_list}
+
+def calculate_equipment_modifiers(equipped: Dict[str, Equipment]) -> Dict[str, float]:
+    """Суммирует модификаторы экипировки с учётом прочности."""
+    total_mods: Dict[str, float] = {}
+    for slot, eq in equipped.items():
+        item = eq.inventory.item
+        durability_mult = 1.0
+        if eq.inventory.durability is not None and item.max_durability > 0:
+            if eq.inventory.durability <= 0:
+                durability_mult = BROKEN_ITEM_PENALTY
+            elif eq.inventory.durability < item.max_durability * 0.3:
+                durability_mult = 0.75
+        for key, val in item.modifiers.items():
+            if isinstance(val, (int, float)):
+                total_mods[key] = total_mods.get(key, 0) + (val * durability_mult)
+    return total_mods
+
+async def get_inventory_full(session: AsyncSession, character_id: str) -> InventoryFullResponse:
+    """Возвращает полное состояние инвентаря и экипировки."""
+    inv_stmt = select(Inventory).options(selectinload(Inventory.item)).where(Inventory.character_id == character_id)
+    inv_result = await session.execute(inv_stmt)
+    inv_items = inv_result.scalars().all()
+    
+    equipped = await get_equipped_items(session, character_id)
+    equipped_inv_ids = {eq.inventory_id for eq in equipped.values()}
+    
+    char_res = await session.execute(select(Character).where(Character.id == character_id))
+    character = char_res.scalar_one()
+    
+    base_slots = character.inventory_slots
+    bag_bonus = sum(
+        item.quantity * item.item.modifiers.get("slot_bonus", 0)
+        for item in inv_items
+        if item.item.item_type == "bag"
+    )
+    max_slots = base_slots + bag_bonus
+    
+    items_response = [
+        InventoryItemResponse(
+            id=item.id, item_id=item.item_id, name=item.item.name,
+            description=item.item.description, item_type=item.item.item_type,
+            rarity=item.item.rarity, quantity=item.quantity,
+            durability=item.durability,
+            max_durability=item.item.max_durability if item.item.max_durability > 0 else None,
+            is_equipped=item.id in equipped_inv_ids,
+            slot=item.item.slot,
+        )
+        for item in inv_items
+    ]
+    
+    equipment_response = {}
+    for slot_name in ["weapon", "armor", "helmet", "gloves", "boots", "accessory", "ring1", "ring2"]:
+        eq = equipped.get(slot_name)
+        if eq:
+            equipment_response[slot_name] = InventoryItemResponse(
+                id=eq.inventory.id, item_id=eq.inventory.item.id,
+                name=eq.inventory.item.name, description=eq.inventory.item.description,
+                item_type=eq.inventory.item.item_type, rarity=eq.inventory.item.rarity,
+                quantity=1, durability=eq.inventory.durability,
+                max_durability=eq.inventory.item.max_durability if eq.inventory.item.max_durability > 0 else None,
+                is_equipped=True, slot=eq.inventory.item.slot,
+            )
+        else:
+            equipment_response[slot_name] = None
+
+    return InventoryFullResponse(
+        used_slots=len(inv_items), max_slots=max_slots,
+        items=items_response, equipment=equipment_response
+    )
+INVENTORY_EOF
+
+echo "✅ inventory_service.py создан"
+
+echo "🔧 Обновляем character_service.py (исправляем импорты и calculate_character_stats)..."
+cat > app/services/character_service.py << 'CHAR_EOF'
+"""Бизнес-логика операций с персонажем."""
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import HTTPException, status
+from app.models.character import Character
+from app.models.location import Location
+from app.models.enums import CHARACTER_STATUS
+from app.utils.constants import CLASS_STARTING_STATS, STARTING_LOCATION_NAME, LEVEL_UP_BONUSES
+from app.utils.calculations import calculate_modifier, clamp_value, check_level_up, calculate_effective_stat
+from app.schemas.character import CharacterCreateRequest, CharacterStatsResponse, CharacterResourcesResponse
+from app.services.inventory_service import get_equipped_items, calculate_equipment_modifiers
+
+async def validate_character_name(session: AsyncSession, name: str, exclude_id: str = None) -> bool:
+    stmt = select(Character).where(Character.name == name)
+    if exclude_id:
+        stmt = stmt.where(Character.id != exclude_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none() is None
+
+async def get_starting_location(session: AsyncSession) -> Location:
+    result = await session.execute(select(Location).where(Location.name == STARTING_LOCATION_NAME))
+    location = result.scalar_one_or_none()
+    if not location:
+        raise HTTPException(status_code=500, detail="Starting location not found")
+    return location
+
+async def calculate_character_stats(session: AsyncSession, character: Character) -> tuple[CharacterStatsResponse, int, int, int]:
+    """Рассчитывает характеристики с учётом экипировки. Возвращает (stats, hp_max, mana_max, stamina_max)."""
+    equipped = await get_equipped_items(session, str(character.id))
+    eq_mods = calculate_equipment_modifiers(equipped)
+    
+    strength = character.strength + int(eq_mods.get("strength", 0))
+    agility = character.agility + int(eq_mods.get("agility", 0))
+    intelligence = character.intelligence + int(eq_mods.get("intelligence", 0))
+    
+    strength_mod = calculate_modifier(strength)
+    agility_mod = calculate_modifier(agility)
+    intelligence_mod = calculate_modifier(intelligence)
+    
+    hp_max = character.hp_max + int(eq_mods.get("hp_max", 0))
+    mana_max = character.mana_max + int(eq_mods.get("mana_max", 0))
+    stamina_max = character.stamina_max + int(eq_mods.get("stamina_max", 0))
+    
+    return CharacterStatsResponse(
+        strength=character.strength, agility=character.agility, intelligence=character.intelligence,
+        strength_mod=strength_mod, agility_mod=agility_mod, intelligence_mod=intelligence_mod,
+        strength_effective=strength, agility_effective=agility, intelligence_effective=intelligence,
+    ), hp_max, mana_max, stamina_max
+
+def calculate_character_resources(character: Character, hp_max: int, mana_max: int, stamina_max: int, inventory_used: int = None) -> CharacterResourcesResponse:
+    return CharacterResourcesResponse(
+        hp_current=character.hp_current, hp_max=hp_max,
+        mana_current=character.mana_current, mana_max=mana_max,
+        stamina_current=character.stamina_current, stamina_max=stamina_max,
+        fatigue=character.fatigue, gold=character.gold,
+        inventory_slots=character.inventory_slots, inventory_slots_used=inventory_used,
+    )
+
+def check_action_allowed(character: Character) -> tuple[bool, str]:
+    if character.fatigue >= 80:
+        return False, f"Слишком высокая усталость ({character.fatigue}%). Отдохните."
+    if character.hp_current <= 0:
+        return False, "Персонаж без сознания."
+    return True, "OK"
+
+async def create_character(session: AsyncSession, user_id: str, request: CharacterCreateRequest) -> Character:
+    if not await validate_character_name(session, request.name):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Персонаж с таким именем уже существует")
+    starting_location = await get_starting_location(session)
+    class_stats = CLASS_STARTING_STATS.get(request.character_class)
+    if not class_stats:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Неверный класс персонажа")
+    character = Character(
+        user_id=user_id, name=request.name, character_class=request.character_class,
+        current_location_id=starting_location.id,
+        strength=class_stats["strength"], agility=class_stats["agility"], intelligence=class_stats["intelligence"],
+        hp_current=class_stats["hp_max"], hp_max=class_stats["hp_max"],
+        mana_current=class_stats["mana_max"], mana_max=class_stats["mana_max"],
+        stamina_current=class_stats["stamina_max"], stamina_max=class_stats["stamina_max"],
+        level=1, experience=0, status="alive", fatigue=0, gold=0, inventory_slots=10,
+    )
+    session.add(character)
+    await session.flush()
+    await session.refresh(character)
+    return character
+
+async def apply_level_up(character: Character) -> dict:
+    stats_increased = {}
+    for stat, bonus in LEVEL_UP_BONUSES.items():
+        if hasattr(character, stat):
+            old_value = getattr(character, stat)
+            new_value = old_value + bonus
+            setattr(character, stat, new_value)
+            stats_increased[stat] = {"old": old_value, "new": new_value}
+    character.hp_current = character.hp_max
+    character.mana_current = character.mana_max
+    character.stamina_current = character.stamina_max
+    character.fatigue = 0
+    return stats_increased
+CHAR_EOF
+
+echo "✅ character_service.py обновлён"
+
+echo "🔧 Создаём schemas/inventory.py..."
+cat > app/schemas/inventory.py << 'SCHEMA_EOF'
+"""Схемы для инвентаря и экипировки."""
+from typing import Optional, List, Dict, Any
+import uuid
+from pydantic import BaseModel, Field
+from app.schemas.enums import ItemType, ItemRarity, EquipmentSlot
+
+class InventoryItemResponse(BaseModel):
+    id: uuid.UUID
+    item_id: uuid.UUID
+    name: str
+    description: Optional[str] = None
+    item_type: ItemType
+    rarity: ItemRarity
+    quantity: int
+    durability: Optional[int] = None
+    max_durability: Optional[int] = None
+    is_equipped: bool = False
+    slot: Optional[EquipmentSlot] = None
+    model_config = {"from_attributes": True}
+
+class InventoryFullResponse(BaseModel):
+    used_slots: int
+    max_slots: int
+    items: List[InventoryItemResponse]
+    equipment: Dict[str, Optional[InventoryItemResponse]] = Field(default_factory=dict)
+    model_config = {"from_attributes": True}
+
+class EquipRequest(BaseModel):
+    inventory_id: uuid.UUID = Field(..., description="ID записи в инвентаре")
+
+class UnequipRequest(BaseModel):
+    slot: EquipmentSlot = Field(..., description="Слот экипировки")
+
+class UseItemRequest(BaseModel):
+    inventory_id: uuid.UUID = Field(..., description="ID записи в инвентаре")
+    target_id: Optional[uuid.UUID] = Field(None, description="ID цели")
+SCHEMA_EOF
+
+echo "✅ schemas/inventory.py создан"
+
+echo "🔧 Создаём api/v1/inventory.py..."
+cat > app/api/v1/inventory.py << 'API_EOF'
+"""Эндпоинты инвентаря и экипировки."""
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.api.deps import get_db, get_current_user
+from app.models.character import Character
+from app.schemas.inventory import InventoryFullResponse, EquipRequest, UnequipRequest, UseItemRequest
+from app.services.inventory_service import get_inventory_full
+
+router = APIRouter(prefix="/inventory", tags=["Inventory & Equipment"])
+
+@router.get("/", response_model=InventoryFullResponse)
+async def get_inventory(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    char = (await db.execute(select(Character).where(Character.user_id == current_user.id))).scalar_one_or_none()
+    if not char:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Персонаж не найден")
+    return await get_inventory_full(db, str(char.id))
+
+@router.post("/equip", status_code=status.HTTP_200_OK)
+async def equip_item_endpoint(request: EquipRequest, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Экипировка будет реализована в подэтапе 8.2")
+
+@router.post("/unequip", status_code=status.HTTP_200_OK)
+async def unequip_item_endpoint(request: UnequipRequest, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Снятие экипировки будет реализовано в подэтапе 8.2")
+
+@router.post("/use", status_code=status.HTTP_200_OK)
+async def use_item_endpoint(request: UseItemRequest, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Использование предметов будет реализовано в подэтапе 8.3")
+API_EOF
+
+echo "✅ api/v1/inventory.py создан"
+
+echo "🔧 Обновляем api/v1/router.py (добавляем inventory_router)..."
+cat > app/api/v1/router.py << 'ROUTER_EOF'
+from fastapi import APIRouter
+from app.api.v1.auth import router as auth_router
+from app.api.v1.character import router as character_router
+from app.api.v1.combat import router as combat_router
+from app.api.v1.locations import router as locations_router
+from app.api.v1.inventory import router as inventory_router
+
+v1_router = APIRouter()
+v1_router.include_router(auth_router)
+v1_router.include_router(character_router)
+v1_router.include_router(combat_router)
+v1_router.include_router(locations_router)
+v1_router.include_router(inventory_router)
+ROUTER_EOF
+
+echo "✅ api/v1/router.py обновлён"
+
+echo ""
+echo "🔄 Перезапускаем сервер..."
+pkill -f "uvicorn app.main:app" 2>/dev/null || true
+sleep 1
+
+echo "🚀 Запуск uvicorn..."
+nohup uvicorn app.main:app --host 127.0.0.1 --port 8000 > ~/legends-of-elara/backend/uvicorn.log 2>&1 &
+sleep 3
+
+echo ""
+echo "✅ Проверка здоровья API:"
+curl -s http://127.0.0.1:8000/health | python3 -m json.tool
+
+echo ""
+echo "🎉 Готово! Импорт ошибки устранены."
+echo "📋 Логи сервера: tail -f ~/legends-of-elara/backend/uvicorn.log"
+```
+
+
+
+### 61. `frontend/public/index.html`
 
 **Размер:** 1.6 KB
 
@@ -4320,7 +5014,7 @@ if __name__ == "__main__":
 
 
 
-### 58. `nginx/conf.d/api.conf`
+### 62. `nginx/conf.d/api.conf`
 
 **Размер:** 0.4 KB
 
@@ -4350,7 +5044,7 @@ server {
 
 
 
-### 59. `nginx/conf.d/app.conf`
+### 63. `nginx/conf.d/app.conf`
 
 **Размер:** 0.0 KB
 
@@ -4364,7 +5058,7 @@ server {
 
 
 
-### 60. `nginx/nginx.conf`
+### 64. `nginx/nginx.conf`
 
 **Размер:** 0.5 KB
 
@@ -4394,7 +5088,7 @@ http {
 
 
 
-### 61. `scan_project.py`
+### 65. `scan_project.py`
 
 **Размер:** 13.7 KB
 
@@ -4789,4 +5483,4 @@ if __name__ == "__main__":
 
 ---
 
-*Всего файлов кода: 61*
+*Всего файлов кода: 65*

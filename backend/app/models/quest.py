@@ -30,6 +30,9 @@ class CharacterQuest(Base, TimestampMixin):
     accepted_at: Mapped[datetime] = mapped_column(server_default="now()")
     completed_at: Mapped[Optional[datetime]]
     
+    # === FIX: Добавляем relationship к Quest ===
+    quest: Mapped["Quest"] = relationship("Quest", lazy="select")
+    
     __table_args__ = (
         Index("idx_character_quests_status", "status"),
     )
