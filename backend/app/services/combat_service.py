@@ -1,6 +1,7 @@
-"""Бизнес-логика боевой системы."""
+"""Бизнес-логика боевой системы с интеграцией экипировки."""
 import asyncio
 import random
+import logging
 from datetime import datetime
 from typing import Optional
 
@@ -17,14 +18,18 @@ from app.schemas.combat import (
     CombatActionResult, CombatStateResponse, CombatLogEntry
 )
 from app.services.character_service import apply_level_up
+from app.services.inventory_service import get_equipped_items, calculate_equipment_modifiers
 from app.utils.calculations import calculate_modifier, clamp_value, check_level_up
 from app.utils.dice import roll_d20, roll_damage, check_success, calculate_dc
+
+logger = logging.getLogger(__name__)
 
 # Константы боя
 BASE_AC = 10  # Базовый класс брони
 BASE_DC = 10  # Базовая сложность проверки
 CRIT_MULTIPLIER = 2  # Множитель урона при крите
 FLEE_DC_BASE = 15  # Базовая сложность побега
+BROKEN_WEAPON_PENALTY = 0.5  # Штраф урона для сломанного оружия
 
 
 async def get_active_combat(session: AsyncSession, character_id: str) -> Optional[CombatSession]:
@@ -128,9 +133,42 @@ def calculate_enemy_attack_dc(enemy_stats: dict) -> int:
     return BASE_DC + calculate_modifier(enemy_stats.get("agility", 10))
 
 
-def calculate_player_armor(character: Character) -> int:
-    """Рассчитывает броню игрока (упрощённо, без экипировки)."""
-    return 0
+async def calculate_player_armor(session: AsyncSession, character_id: str) -> int:
+    """8.4 Рассчитывает броню игрока на основе экипированной брони/аксессуаров."""
+    equipped = await get_equipped_items(session, character_id)
+    mods = calculate_equipment_modifiers(equipped)
+    return int(mods.get("armor", 0))
+
+
+async def calculate_player_weapon_damage(
+    session: AsyncSession, 
+    character: Character, 
+    is_critical: bool = False
+) -> tuple[int, int]:
+    """8.4 Возвращает (min_dmg, max_dmg) с учётом экипированного оружия и прочности."""
+    equipped = await get_equipped_items(session, str(character.id))
+    mods = calculate_equipment_modifiers(equipped)
+    
+    # Базовый урон от силы
+    base_min = character.strength // 2
+    base_max = character.strength
+    
+    # Модификаторы от оружия
+    weapon_dmg_min = int(mods.get("damage_min", 0))
+    weapon_dmg_max = int(mods.get("damage_max", 0))
+    
+    total_min = base_min + weapon_dmg_min
+    total_max = base_max + weapon_dmg_max
+    
+    # Проверка на сломанное оружие (штраф к урону)
+    for slot, eq in equipped.items():
+        if slot == "weapon" and eq.inventory.durability is not None:
+            if eq.inventory.durability <= 0:
+                total_min = int(total_min * BROKEN_WEAPON_PENALTY)
+                total_max = int(total_max * BROKEN_WEAPON_PENALTY)
+                break
+    
+    return max(0, total_min), max(total_min, total_max)
 
 
 def calculate_damage(
@@ -140,7 +178,7 @@ def calculate_damage(
     max_dmg: int,
     is_critical: bool = False
 ) -> int:
-    """Рассчитывает итоговый урон."""
+    """Рассчитывает итоговый урон с учётом брони и крита."""
     str_mod = calculate_modifier(attacker_str)
     base_dmg = roll_damage(min_dmg, max_dmg, str_mod, is_critical)
     return max(0, base_dmg - defender_armor)
@@ -182,7 +220,7 @@ async def generate_combat_narrative(
         if cached_response:
             return cached_response.strip()
         
-        # Запрос к ИИ с таймаутом (чтобы не ждать долго)
+        # Запрос к ИИ с таймаутом
         response = await asyncio.wait_for(
             client.generate(messages, temperature=0.8, max_tokens=100),
             timeout=3.0
@@ -192,8 +230,8 @@ async def generate_combat_narrative(
         await cache.set(prompt_hash, response.strip())
         return response.strip()
         
-    except Exception:
-        # В случае ошибки возвращаем стандартное описание (fallback)
+    except Exception as e:
+        logger.warning(f"AI narrative generation failed: {e}")
         return f"{result_desc} (Урон: {damage if damage else 0})"
 
 
@@ -202,7 +240,7 @@ async def process_player_attack(
     combat: CombatSession,
     character: Character
 ) -> CombatActionResult:
-    """Обрабатывает атаку игрока."""
+    """Обрабатывает атаку игрока с учётом экипировки."""
     enemy_stats = combat.enemy_stats
     
     # Бросок атаки
@@ -212,8 +250,7 @@ async def process_player_attack(
     
     # Проверка попадания
     if attack_roll == 1:
-        # Критический промах
-        log_entry = f"Вы промахнулись критически!"
+        log_entry = "Вы промахнулись критически!"
         ai_description = await generate_combat_narrative(
             character=character,
             enemy_name=combat.enemy_name,
@@ -239,11 +276,11 @@ async def process_player_attack(
         )
     
     if is_crit:
-        log_entry = f"Критический удар! "
+        log_entry = "Критический удар! "
     elif check_success(attack_roll, attack_dc):
-        log_entry = f"Вы попали! "
+        log_entry = "Вы попали! "
     else:
-        log_entry = f"Вы промахнулись. "
+        log_entry = "Вы промахнулись. "
         ai_description = await generate_combat_narrative(
             character=character,
             enemy_name=combat.enemy_name,
@@ -263,12 +300,15 @@ async def process_player_attack(
         await session.flush()
         return CombatActionResult(success=True, message=log_entry, is_miss=True)
     
-    # Расчёт урона
+    # Расчёт урона с учётом экипировки
+    min_dmg, max_dmg = await calculate_player_weapon_damage(session, character, is_crit)
+    enemy_armor = enemy_stats.get("armor", 0)
+    
     damage = calculate_damage(
         attacker_str=character.strength,
-        defender_armor=enemy_stats.get("armor", 0),
-        min_dmg=character.strength // 2,
-        max_dmg=character.strength,
+        defender_armor=enemy_armor,
+        min_dmg=min_dmg,
+        max_dmg=max_dmg,
         is_critical=is_crit
     )
     
@@ -288,7 +328,6 @@ async def process_player_attack(
         enemy_max=combat.enemy_hp_max
     )
     
-    # Добавляем запись в лог с ИИ описанием
     combat.combat_log.append(CombatLogEntry(
         turn=combat.current_turn,
         actor="player",
@@ -316,10 +355,10 @@ async def process_enemy_turn(
     combat: CombatSession,
     character: Character
 ) -> CombatActionResult:
-    """Обрабатывает ход врага."""
+    """Обрабатывает ход врага с учётом брони персонажа из экипировки."""
     enemy_stats = combat.enemy_stats
     
-    # Простая логика: враг всегда атакует
+    # Логика врага: всегда атакует
     attack_mod = calculate_modifier(enemy_stats.get("strength", 10))
     attack_roll, is_crit = roll_d20(attack_mod)
     attack_dc = calculate_player_attack_dc(character)
@@ -370,10 +409,12 @@ async def process_enemy_turn(
         await session.flush()
         return CombatActionResult(success=True, message=log_entry, is_miss=True)
     
-    # Расчёт урона
+    # Расчёт урона с учётом брони из экипировки
+    player_armor = await calculate_player_armor(session, str(character.id))
+    
     damage = calculate_damage(
         attacker_str=enemy_stats.get("strength", 10),
-        defender_armor=calculate_player_armor(character),
+        defender_armor=player_armor,
         min_dmg=enemy_stats.get("damage_min", 1),
         max_dmg=enemy_stats.get("damage_max", 5),
         is_critical=is_crit
@@ -384,7 +425,7 @@ async def process_enemy_turn(
     
     log_entry += f"Урон: {damage}. Ваше HP: {character.hp_current}/{character.hp_max}"
     
-    # Генерация ИИ описания атаки врага
+    # Генерация ИИ описания
     ai_description = await generate_combat_narrative(
         character=character,
         enemy_name=combat.enemy_name,

@@ -1,6 +1,6 @@
 # Структура проекта: legends-of-elara
 
-*Сгенерировано: 2026-04-12 11:35:41*
+*Сгенерировано: 2026-04-12 12:21:46*
 
 *Путь: `/root/legends-of-elara`*
 
@@ -85,7 +85,6 @@
     - `requirements.txt` (0.6 KB)
   - **deploy/**
     - **backups/**
-    - **scripts/**
   - **docs/**
   - **frontend/**
     - **public/**
