@@ -39,7 +39,7 @@ export interface CharacterResources {
   stamina_current: number;
   stamina_max: number;
   fatigue: number;
-  gold: number;
+  gold: number; // ИСПРАВЛЕНИЕ: Добавлено поле
 }
 
 export interface Character {
@@ -52,6 +52,8 @@ export interface Character {
   resources: CharacterResources;
   status: 'alive' | 'dead' | 'resting';
   current_location_id: string;
+  gold: number; // ИСПРАВЛЕНИЕ: Добавлено поле
+  inventory_slots: number; // ИСПРАВЛЕНИЕ: Добавлено поле
   created_at: string;
   updated_at: string;
 }

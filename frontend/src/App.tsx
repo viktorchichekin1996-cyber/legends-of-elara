@@ -15,40 +15,54 @@ import {
   Button,
   Snackbar,
   Link,
+  Tabbar,
+  TabbarItem,
 } from '@vkontakte/vkui';
 import '@vkontakte/vkui/dist/vkui.css';
+import { useState, useEffect } from 'react';
 import { useVkBridge } from './hooks/useVkBridge';
 import { useAuth } from './hooks/useAuth';
+import { 
+  Icon28GameOutline, 
+  Icon28NewsfeedOutline,
+  Icon28InboxOutline,
+  Icon28LocationOutline,
+  Icon28BookOutline 
+} from '@vkontakte/icons';
 import { Icon28WarningTriangleOutline } from '@vkontakte/icons';
 import { GameScreen } from './screens/GameScreen';
 import { CreateCharacterScreen } from './screens/CreateCharacterScreen';
+import { QuestsScreen } from './screens/QuestsScreen';
+import { InventoryScreen } from './screens/InventoryScreen';
+import { MemoriesScreen } from './screens/MemoriesScreen';
 import { useCharacterStore } from './store/characterStore';
-import { useEffect } from 'react';
+
+type ActivePanel = 'game' | 'quests' | 'inventory' | 'map' | 'memories';
 
 function App() {
   const { isInitialized: bridgeReady, vkUser, appearance, platform, error: bridgeError, initData } = useVkBridge();
   const { isAuthenticated, isLoading: authLoading, error: authError, clearError } = useAuth();
   const { character, fetchCharacter, needsCreation, isLoading: charLoading } = useCharacterStore();
+  const [activePanel, setActivePanel] = useState<ActivePanel>('game');
 
-  // Загружаем персонажа после авторизации
   useEffect(() => {
     if (isAuthenticated && !character && !needsCreation && !charLoading) {
       fetchCharacter();
     }
   }, [isAuthenticated, character, needsCreation, charLoading, fetchCharacter]);
 
-  // Состояние загрузки
   if (!bridgeReady || authLoading || (isAuthenticated && charLoading && !needsCreation)) {
     return (
+      // ИСПРАВЛЕНО: Удалён проп appearance
       <AppRoot>
-        <ScreenSpinner />
+        <ScreenSpinner style={{ backgroundColor: 'rgba(11, 16, 32, 0.8)' }} />
       </AppRoot>
     );
   }
 
-  // Ошибка VK Bridge
   if (bridgeError) {
     return (
+      // ИСПРАВЛЕНО: Удалён проп appearance
       <AppRoot>
         <View activePanel="error">
           <Panel id="error">
@@ -64,9 +78,9 @@ function App() {
     );
   }
 
-  // Нет initData — приложение открыто вне VK
   if (!initData) {
     return (
+      // ИСПРАВЛЕНО: Удалён проп appearance
       <AppRoot>
         <View activePanel="no-vk">
           <Panel id="no-vk">
@@ -91,11 +105,11 @@ function App() {
     );
   }
 
-  // Ошибка авторизации
   const hasAuthError = !!authError;
 
   if (hasAuthError) {
     return (
+      // ИСПРАВЛЕНО: Удалён проп appearance из ConfigProvider и AppRoot
       <ConfigProvider platform={platform}>
         <AdaptivityProvider>
           <AppRoot>
@@ -119,11 +133,10 @@ function App() {
     );
   }
 
-  // Если авторизован
   if (isAuthenticated) {
-    // Если нужно создать персонажа — показываем экран создания
     if (needsCreation || !character) {
       return (
+        // ИСПРАВЛЕНО: Удалён проп appearance
         <ConfigProvider platform={platform}>
           <AdaptivityProvider>
             <AppRoot>
@@ -134,20 +147,85 @@ function App() {
       );
     }
 
-    // Иначе — игровой экран
     return (
+      // ИСПРАВЛЕНО: Удалён проп appearance
       <ConfigProvider platform={platform}>
         <AdaptivityProvider>
           <AppRoot>
-            <GameScreen id="game" />
+            <SplitLayout>
+              <SplitCol>
+                <View activePanel={activePanel}>
+                  <GameScreen id="game" />
+                  <QuestsScreen id="quests" />
+                  <InventoryScreen id="inventory" />
+                  <MemoriesScreen id="memories" />
+                  <View activePanel="map">
+                    <Panel id="map">
+                      <PanelHeader>🗺️ Карта мира</PanelHeader>
+                      <Group>
+                        <div style={{ padding: 40, textAlign: 'center' }}>
+                          <Text style={{ fontSize: 48, marginBottom: 16 }}>🗺️</Text>
+                          <Text weight="2" style={{ fontSize: 18, color: '#94a3b8' }}>
+                            Карта в разработке
+                          </Text>
+                        </div>
+                      </Group>
+                    </Panel>
+                  </View>
+                </View>
+              </SplitCol>
+            </SplitLayout>
+
+            <Tabbar style={{ background: '#0b1020', borderTop: '1px solid #2d3755' }}>
+              <TabbarItem
+                selected={activePanel === 'game'}
+                onClick={() => setActivePanel('game')}
+                style={{ color: activePanel === 'game' ? '#60a5fa' : '#94a3b8' }}
+              >
+                <Icon28GameOutline fill={activePanel === 'game' ? '#60a5fa' : '#94a3b8'} />
+                Игра
+              </TabbarItem>
+              <TabbarItem
+                selected={activePanel === 'quests'}
+                onClick={() => setActivePanel('quests')}
+                style={{ color: activePanel === 'quests' ? '#60a5fa' : '#94a3b8' }}
+              >
+                <Icon28NewsfeedOutline fill={activePanel === 'quests' ? '#60a5fa' : '#94a3b8'} />
+                Квесты
+              </TabbarItem>
+              <TabbarItem
+                selected={activePanel === 'inventory'}
+                onClick={() => setActivePanel('inventory')}
+                style={{ color: activePanel === 'inventory' ? '#60a5fa' : '#94a3b8' }}
+              >
+                <Icon28InboxOutline fill={activePanel === 'inventory' ? '#60a5fa' : '#94a3b8'} />
+                Инвентарь
+              </TabbarItem>
+              <TabbarItem
+                selected={activePanel === 'memories'}
+                onClick={() => setActivePanel('memories')}
+                style={{ color: activePanel === 'memories' ? '#60a5fa' : '#94a3b8' }}
+              >
+                <Icon28BookOutline fill={activePanel === 'memories' ? '#60a5fa' : '#94a3b8'} />
+                Память
+              </TabbarItem>
+              <TabbarItem
+                selected={activePanel === 'map'}
+                onClick={() => setActivePanel('map')}
+                style={{ color: activePanel === 'map' ? '#60a5fa' : '#94a3b8' }}
+              >
+                <Icon28LocationOutline fill={activePanel === 'map' ? '#60a5fa' : '#94a3b8'} />
+                Карта
+              </TabbarItem>
+            </Tabbar>
           </AppRoot>
         </AdaptivityProvider>
       </ConfigProvider>
     );
   }
 
-  // Ожидание авторизации
   return (
+    // ИСПРАВЛЕНО: Удалён проп appearance
     <ConfigProvider platform={platform}>
       <AdaptivityProvider>
         <AppRoot>
