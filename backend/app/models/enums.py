@@ -4,33 +4,41 @@ def pg_enum(name: str, *values: str) -> ENUM:
     return ENUM(*values, name=name, create_type=True)
 
 CHARACTER_CLASS = pg_enum('character_class',
-    'warrior', 'priest', 'paladin', 'mage', 'summoner',
-    'necromancer', 'barbarian', 'hunter', 'druid', 'rogue', 'werewolf'
+    'воин', 'жрец', 'паладин', 'маг', 'призыватель',
+    'некромант', 'варвар', 'охотник', 'друид', 'вор', 'оборотень'
 )
+
 ITEM_TYPE = pg_enum('item_type',
-    'weapon', 'armor', 'accessory', 'consumable', 'quest_item', 'bag'
+    'оружие', 'броня', 'аксессуар', 'расходник', 'квестовый', 'сумка'
 )
+
 ITEM_RARITY = pg_enum('item_rarity',
-    'common', 'uncommon', 'rare', 'epic', 'legendary'
+    'обычный', 'необычный', 'редкий', 'эпический', 'легендарный'
 )
+
 EQUIPMENT_SLOT = pg_enum('equipment_slot',
-    'weapon', 'armor', 'helmet', 'gloves', 'boots',
-    'accessory', 'ring1', 'ring2'
+    'оружие', 'броня', 'шлем', 'перчатки', 'ботинки',
+    'аксессуар', 'кольцо1', 'кольцо2'
 )
+
 LOCATION_TYPE = pg_enum('location_type',
-    'city', 'forest', 'road', 'dungeon', 'cave', 'mountain', 'swamp'
+    'город', 'лес', 'дорога', 'подземелье', 'пещера', 'горы', 'болото'
 )
+
 QUEST_STATUS = pg_enum('quest_status',
-    'active', 'completed', 'failed', 'cancelled'
+    'активен', 'завершён', 'провален', 'отменён'
 )
+
 TRANSACTION_TYPE = pg_enum('transaction_type',
-    'quest_reward', 'combat_reward', 'shop_buy', 'shop_sell',
-    'tavern_rest', 'repair', 'training', 'penalty'
+    'награда_квест', 'награда_бой', 'покупка', 'продажа',
+    'отдых', 'ремонт', 'обучение', 'штраф'
 )
+
 MEMORY_TYPE = pg_enum('memory_type',
-    'boss_defeat', 'ally_death', 'important_choice', 'discovery',
-    'quest_complete', 'level_up', 'unique_event'
+    'победа_над_боссом', 'смерть_союзника', 'важный_выбор', 'открытие',
+    'квест_завершён', 'повышение_уровня', 'уникальное_событие'
 )
+
 CHARACTER_STATUS = pg_enum('character_status',
-    'alive', 'dead', 'resting'
+    'жив', 'мёртв', 'отдых'
 )

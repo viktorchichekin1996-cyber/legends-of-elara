@@ -1,14 +1,12 @@
 """
 Seed-скрипт для начального наполнения БД.
 Идемпотентен: пропускает уже существующие записи.
+Использует русские значения Enum, соответствующие бэкенду.
 """
 import sys
 import os
 import asyncio
 
-# === FIX: Добавляем корень backend в sys.path ===
-# Это решает ошибку "ModuleNotFoundError: No module named 'app'"
-# При запуске из папки seeds/ мы поднимаемся на уровень выше (в backend/)
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from sqlalchemy import select
@@ -20,10 +18,52 @@ from loguru import logger
 
 async def seed_locations(session):
     locations = [
-        {"name": "Деревня Элдарион", "location_type": "city", "region": "Центральный", "coord_x": 0, "coord_y": 0, "danger_level": 0, "min_level": 1, "is_safe": True, "has_shop": True, "has_tavern": True, "description": "Тихая деревня на окраине королевства."},
-        {"name": "Шёпот Лесов", "location_type": "forest", "region": "Север", "coord_x": 1, "coord_y": 2, "danger_level": 2, "min_level": 1, "is_safe": False, "description": "Густой древний лес, полный теней и шорохов."},
-        {"name": "Пещера Теней", "location_type": "cave", "region": "Восток", "coord_x": 3, "coord_y": 1, "danger_level": 4, "min_level": 3, "is_safe": False, "description": "Мрачная пещера, откуда доносятся странные звуки."},
-        {"name": "Дорога торговцев", "location_type": "road", "region": "Центральный", "coord_x": 0, "coord_y": 1, "danger_level": 1, "min_level": 1, "is_safe": False, "description": "Пыльная, но оживлённая тропа."}
+        {
+            "name": "Деревня Элдарион",
+            "location_type": "город",  # Было "city"
+            "region": "Центральный",
+            "coord_x": 0,
+            "coord_y": 0,
+            "danger_level": 0,
+            "min_level": 1,
+            "is_safe": True,
+            "has_shop": True,
+            "has_tavern": True,
+            "description": "Тихая деревня на окраине королевства."
+        },
+        {
+            "name": "Шёпот Лесов",
+            "location_type": "лес",  # Было "forest"
+            "region": "Север",
+            "coord_x": 1,
+            "coord_y": 2,
+            "danger_level": 2,
+            "min_level": 1,
+            "is_safe": False,
+            "description": "Густой древний лес, полный теней и шорохов."
+        },
+        {
+            "name": "Пещера Теней",
+            "location_type": "пещера",  # Было "cave"
+            "region": "Восток",
+            "coord_x": 3,
+            "coord_y": 1,
+            "danger_level": 4,
+            "min_level": 3,
+            "is_safe": False,
+            "description": "Мрачная пещера, откуда доносятся странные звуки."
+        },
+        {
+            "name": "Дорога торговцев",
+            "location_type": "дорога",  # Было "road"
+            "region": "Центральный",
+            "coord_x": 0,
+            "coord_y": 1,
+            "danger_level": 1,
+            "min_level": 1,
+            "is_safe": False,
+            "description": "Пыльная, но оживлённая тропа."
+        }
     ]
     for loc in locations:
         if not (await session.execute(select(Location).where(Location.name == loc["name"]))).scalar_one_or_none():
@@ -51,17 +91,52 @@ async def seed_connections(session):
         (locs["Пещера Теней"], locs["Дорога торговцев"], 2, 2)
     ]
     for f, t, d, diff in conns:
-        if not (await session.execute(select(LocationConnection).where(LocationConnection.from_location_id == f, LocationConnection.to_location_id == t))).scalar_one_or_none():
+        if not (await session.execute(select(LocationConnection).where(
+            LocationConnection.from_location_id == f,
+            LocationConnection.to_location_id == t
+        ))).scalar_one_or_none():
             session.add(LocationConnection(from_location_id=f, to_location_id=t, distance=d, travel_difficulty=diff))
     await session.flush()
     logger.info("✅ Связи локаций добавлены.")
 
 async def seed_items(session):
     items = [
-        {"name": "Ржавый меч", "item_type": "weapon", "rarity": "common", "base_cost": 50, "damage_min": 2, "damage_max": 4, "slot": "weapon", "is_stackable": False},
-        {"name": "Кожаная броня", "item_type": "armor", "rarity": "common", "base_cost": 40, "armor": 2, "slot": "armor", "is_stackable": False},
-        {"name": "Зелье здоровья", "item_type": "consumable", "rarity": "common", "base_cost": 15, "is_stackable": True, "modifiers": {"hp_restore": 20}},
-        {"name": "Стальной щит", "item_type": "armor", "rarity": "uncommon", "base_cost": 120, "armor": 4, "slot": "accessory", "is_stackable": False}
+        {
+            "name": "Ржавый меч",
+            "item_type": "оружие",  # Было "weapon"
+            "rarity": "обычный",    # Было "common"
+            "base_cost": 50,
+            "damage_min": 2,
+            "damage_max": 4,
+            "slot": "оружие",       # Было "weapon"
+            "is_stackable": False
+        },
+        {
+            "name": "Кожаная броня",
+            "item_type": "броня",   # Было "armor"
+            "rarity": "обычный",    # Было "common"
+            "base_cost": 40,
+            "armor": 2,
+            "slot": "броня",        # Было "armor"
+            "is_stackable": False
+        },
+        {
+            "name": "Зелье здоровья",
+            "item_type": "расходник",  # Было "consumable"
+            "rarity": "обычный",       # Было "common"
+            "base_cost": 15,
+            "is_stackable": True,
+            "modifiers": {"hp_restore": 20}
+        },
+        {
+            "name": "Стальной щит",
+            "item_type": "броня",      # Было "armor"
+            "rarity": "необычный",     # Было "uncommon"
+            "base_cost": 120,
+            "armor": 4,
+            "slot": "аксессуар",       # Было "accessory"
+            "is_stackable": False
+        }
     ]
     for itm in items:
         if not (await session.execute(select(Item).where(Item.name == itm["name"]))).scalar_one_or_none():
@@ -70,9 +145,38 @@ async def seed_items(session):
     logger.info("✅ Предметы добавлены.")
 
 async def seed_enemies(session):
+    # enemy_type — это String, а не Enum, поэтому значения могут быть любыми
     enemies = [
-        {"name": "Бешеный волк", "enemy_type": "beast", "level": 1, "hp": 30, "strength": 6, "agility": 12, "intelligence": 2, "damage_min": 3, "damage_max": 6, "xp_reward": 10, "gold_min": 5, "gold_max": 12, "description": "Худой, но агрессивный хищник."},
-        {"name": "Гоблин-воришка", "enemy_type": "humanoid", "level": 2, "hp": 45, "strength": 8, "agility": 14, "intelligence": 6, "damage_min": 5, "damage_max": 9, "xp_reward": 25, "gold_min": 15, "gold_max": 30, "description": "Проворный гоблин с заточкой."}
+        {
+            "name": "Бешеный волк",
+            "enemy_type": "зверь",
+            "level": 1,
+            "hp": 30,
+            "strength": 6,
+            "agility": 12,
+            "intelligence": 2,
+            "damage_min": 3,
+            "damage_max": 6,
+            "xp_reward": 10,
+            "gold_min": 5,
+            "gold_max": 12,
+            "description": "Худой, но агрессивный хищник."
+        },
+        {
+            "name": "Гоблин-воришка",
+            "enemy_type": "гуманоид",
+            "level": 2,
+            "hp": 45,
+            "strength": 8,
+            "agility": 14,
+            "intelligence": 6,
+            "damage_min": 5,
+            "damage_max": 9,
+            "xp_reward": 25,
+            "gold_min": 15,
+            "gold_max": 30,
+            "description": "Проворный гоблин с заточкой."
+        }
     ]
     for enm in enemies:
         if not (await session.execute(select(Enemy).where(Enemy.name == enm["name"]))).scalar_one_or_none():

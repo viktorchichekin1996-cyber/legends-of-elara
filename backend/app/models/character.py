@@ -6,6 +6,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, TimestampMixin
 from app.models.enums import CHARACTER_CLASS, CHARACTER_STATUS
+from app.schemas.enums import CharacterStatus  # Добавлен импорт Enum
 
 class Character(Base, TimestampMixin):
     __tablename__ = "characters"
@@ -28,7 +29,8 @@ class Character(Base, TimestampMixin):
     # === Поля с дефолтами ===
     level: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     experience: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    status: Mapped[str] = mapped_column(CHARACTER_STATUS, default="alive", nullable=False)
+    # ИСПРАВЛЕНО: Используем Enum вместо строки "alive"
+    status: Mapped[str] = mapped_column(CHARACTER_STATUS, default=CharacterStatus.ALIVE, nullable=False)
     strength: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     agility: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     intelligence: Mapped[int] = mapped_column(Integer, default=10, nullable=False)

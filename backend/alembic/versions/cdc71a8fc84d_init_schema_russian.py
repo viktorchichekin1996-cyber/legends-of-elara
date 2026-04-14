@@ -1,8 +1,8 @@
-"""init_full_schema_fixed
+"""init_schema_russian
 
-Revision ID: f10436cfd78e
+Revision ID: cdc71a8fc84d
 Revises: 
-Create Date: 2026-04-10 20:50:53.766239
+Create Date: 2026-04-14 15:15:43.488436
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = 'f10436cfd78e'
+revision: str = 'cdc71a8fc84d'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -60,18 +60,18 @@ def upgrade() -> None:
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('name', sa.String(length=100), nullable=False),
     sa.Column('description', sa.Text(), nullable=True),
-    sa.Column('item_type', postgresql.ENUM('weapon', 'armor', 'accessory', 'consumable', 'quest_item', 'bag', name='item_type'), nullable=False),
-    sa.Column('rarity', postgresql.ENUM('common', 'uncommon', 'rare', 'epic', 'legendary', name='item_rarity'), nullable=False),
+    sa.Column('item_type', postgresql.ENUM('оружие', 'броня', 'аксессуар', 'расходник', 'квестовый', 'сумка', name='item_type'), nullable=False),
+    sa.Column('rarity', postgresql.ENUM('обычный', 'необычный', 'редкий', 'эпический', 'легендарный', name='item_rarity'), nullable=False),
     sa.Column('base_cost', sa.Integer(), nullable=False),
     sa.Column('sell_multiplier', sa.Numeric(precision=3, scale=2), nullable=False),
     sa.Column('required_level', sa.Integer(), nullable=True),
-    sa.Column('required_class', sa.ARRAY(postgresql.ENUM('warrior', 'priest', 'paladin', 'mage', 'summoner', 'necromancer', 'barbarian', 'hunter', 'druid', 'rogue', 'werewolf', name='character_class')), nullable=True),
+    sa.Column('required_class', sa.ARRAY(postgresql.ENUM('воин', 'жрец', 'паладин', 'маг', 'призыватель', 'некромант', 'варвар', 'охотник', 'друид', 'вор', 'оборотень', name='character_class')), nullable=True),
     sa.Column('modifiers', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
     sa.Column('damage_min', sa.Integer(), nullable=False),
     sa.Column('damage_max', sa.Integer(), nullable=False),
     sa.Column('armor', sa.Integer(), nullable=False),
     sa.Column('max_durability', sa.Integer(), nullable=False),
-    sa.Column('slot', postgresql.ENUM('weapon', 'armor', 'helmet', 'gloves', 'boots', 'accessory', 'ring1', 'ring2', name='equipment_slot'), nullable=True),
+    sa.Column('slot', postgresql.ENUM('оружие', 'броня', 'шлем', 'перчатки', 'ботинки', 'аксессуар', 'кольцо1', 'кольцо2', name='equipment_slot'), nullable=True),
     sa.Column('is_stackable', sa.Boolean(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
@@ -80,7 +80,7 @@ def upgrade() -> None:
     op.create_table('locations',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('name', sa.String(length=100), nullable=False),
-    sa.Column('location_type', postgresql.ENUM('city', 'forest', 'road', 'dungeon', 'cave', 'mountain', 'swamp', name='location_type'), nullable=False),
+    sa.Column('location_type', postgresql.ENUM('город', 'лес', 'дорога', 'подземелье', 'пещера', 'горы', 'болото', name='location_type'), nullable=False),
     sa.Column('region', sa.String(length=50), nullable=False),
     sa.Column('coord_x', sa.Integer(), nullable=False),
     sa.Column('coord_y', sa.Integer(), nullable=False),
@@ -124,7 +124,7 @@ def upgrade() -> None:
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('user_id', sa.UUID(), nullable=False),
     sa.Column('name', sa.String(length=50), nullable=False),
-    sa.Column('character_class', postgresql.ENUM('warrior', 'priest', 'paladin', 'mage', 'summoner', 'necromancer', 'barbarian', 'hunter', 'druid', 'rogue', 'werewolf', name='character_class'), nullable=False),
+    sa.Column('character_class', postgresql.ENUM('воин', 'жрец', 'паладин', 'маг', 'призыватель', 'некромант', 'варвар', 'охотник', 'друид', 'вор', 'оборотень', name='character_class'), nullable=False),
     sa.Column('current_location_id', sa.UUID(), nullable=False),
     sa.Column('hp_current', sa.Integer(), nullable=False),
     sa.Column('hp_max', sa.Integer(), nullable=False),
@@ -134,7 +134,7 @@ def upgrade() -> None:
     sa.Column('stamina_max', sa.Integer(), nullable=False),
     sa.Column('level', sa.Integer(), nullable=False),
     sa.Column('experience', sa.Integer(), nullable=False),
-    sa.Column('status', postgresql.ENUM('alive', 'dead', 'resting', name='character_status'), nullable=False),
+    sa.Column('status', postgresql.ENUM('жив', 'мёртв', 'отдых', name='character_status'), nullable=False),
     sa.Column('strength', sa.Integer(), nullable=False),
     sa.Column('agility', sa.Integer(), nullable=False),
     sa.Column('intelligence', sa.Integer(), nullable=False),
@@ -187,7 +187,7 @@ def upgrade() -> None:
     op.create_table('character_memories',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('character_id', sa.UUID(), nullable=False),
-    sa.Column('memory_type', postgresql.ENUM('boss_defeat', 'ally_death', 'important_choice', 'discovery', 'quest_complete', 'level_up', 'unique_event', name='memory_type'), nullable=False),
+    sa.Column('memory_type', postgresql.ENUM('победа_над_боссом', 'смерть_союзника', 'важный_выбор', 'открытие', 'квест_завершён', 'повышение_уровня', 'уникальное_событие', name='memory_type'), nullable=False),
     sa.Column('title', sa.String(length=150), nullable=False),
     sa.Column('description', sa.Text(), nullable=False),
     sa.Column('importance', sa.Integer(), nullable=False),
@@ -205,7 +205,7 @@ def upgrade() -> None:
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('character_id', sa.UUID(), nullable=False),
     sa.Column('quest_id', sa.UUID(), nullable=False),
-    sa.Column('status', postgresql.ENUM('active', 'completed', 'failed', 'cancelled', name='quest_status'), nullable=False),
+    sa.Column('status', postgresql.ENUM('активен', 'завершён', 'провален', 'отменён', name='quest_status'), nullable=False),
     sa.Column('progress', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
     sa.Column('accepted_at', sa.DateTime(), server_default='now()', nullable=False),
     sa.Column('completed_at', sa.DateTime(), nullable=True),
@@ -278,7 +278,7 @@ def upgrade() -> None:
     op.create_table('transactions',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('character_id', sa.UUID(), nullable=False),
-    sa.Column('transaction_type', postgresql.ENUM('quest_reward', 'combat_reward', 'shop_buy', 'shop_sell', 'tavern_rest', 'repair', 'training', 'penalty', name='transaction_type'), nullable=False),
+    sa.Column('transaction_type', postgresql.ENUM('награда_квест', 'награда_бой', 'покупка', 'продажа', 'отдых', 'ремонт', 'обучение', 'штраф', name='transaction_type'), nullable=False),
     sa.Column('amount', sa.Integer(), nullable=False),
     sa.Column('description', sa.String(), nullable=True),
     sa.Column('reference_id', sa.UUID(), nullable=True),
@@ -293,7 +293,7 @@ def upgrade() -> None:
     op.create_index(op.f('ix_transactions_character_id'), 'transactions', ['character_id'], unique=False)
     op.create_table('equipment',
     sa.Column('character_id', sa.UUID(), nullable=False),
-    sa.Column('slot', postgresql.ENUM('weapon', 'armor', 'helmet', 'gloves', 'boots', 'accessory', 'ring1', 'ring2', name='equipment_slot'), nullable=False),
+    sa.Column('slot', postgresql.ENUM('оружие', 'броня', 'шлем', 'перчатки', 'ботинки', 'аксессуар', 'кольцо1', 'кольцо2', name='equipment_slot'), nullable=False),
     sa.Column('inventory_id', sa.UUID(), nullable=False),
     sa.Column('equipped_at', sa.DateTime(), server_default='now()', nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),

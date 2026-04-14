@@ -5,6 +5,7 @@ from fastapi import HTTPException, status
 from app.models.character import Character
 from app.models.location import Location
 from app.models.enums import CHARACTER_STATUS
+from app.schemas.enums import CharacterStatus  # Добавлен импорт Enum
 from app.utils.constants import CLASS_STARTING_STATS, STARTING_LOCATION_NAME, LEVEL_UP_BONUSES
 from app.utils.calculations import calculate_modifier, clamp_value, check_level_up, calculate_effective_stat
 from app.schemas.character import CharacterCreateRequest, CharacterStatsResponse, CharacterResourcesResponse
@@ -66,19 +67,36 @@ def check_action_allowed(character: Character) -> tuple[bool, str]:
 async def create_character(session: AsyncSession, user_id: str, request: CharacterCreateRequest) -> Character:
     if not await validate_character_name(session, request.name):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Персонаж с таким именем уже существует")
+    
     starting_location = await get_starting_location(session)
+    
     class_stats = CLASS_STARTING_STATS.get(request.character_class)
     if not class_stats:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Неверный класс персонажа")
+    
     character = Character(
-        user_id=user_id, name=request.name, character_class=request.character_class,
+        user_id=user_id,
+        name=request.name,
+        character_class=request.character_class,
         current_location_id=starting_location.id,
-        strength=class_stats["strength"], agility=class_stats["agility"], intelligence=class_stats["intelligence"],
-        hp_current=class_stats["hp_max"], hp_max=class_stats["hp_max"],
-        mana_current=class_stats["mana_max"], mana_max=class_stats["mana_max"],
-        stamina_current=class_stats["stamina_max"], stamina_max=class_stats["stamina_max"],
-        level=1, experience=0, status="alive", fatigue=0, gold=0, inventory_slots=10,
+        strength=class_stats["strength"],
+        agility=class_stats["agility"],
+        intelligence=class_stats["intelligence"],
+        hp_current=class_stats["hp_max"],
+        hp_max=class_stats["hp_max"],
+        mana_current=class_stats["mana_max"],
+        mana_max=class_stats["mana_max"],
+        stamina_current=class_stats["stamina_max"],
+        stamina_max=class_stats["stamina_max"],
+        level=1,
+        experience=0,
+        # ИСПРАВЛЕНО: Используем Enum вместо строки "alive"
+        status=CharacterStatus.ALIVE,
+        fatigue=0,
+        gold=0,
+        inventory_slots=10,
     )
+    
     session.add(character)
     await session.flush()
     await session.refresh(character)
@@ -92,8 +110,10 @@ async def apply_level_up(character: Character) -> dict:
             new_value = old_value + bonus
             setattr(character, stat, new_value)
             stats_increased[stat] = {"old": old_value, "new": new_value}
+    
     character.hp_current = character.hp_max
     character.mana_current = character.mana_max
     character.stamina_current = character.stamina_max
     character.fatigue = 0
+    
     return stats_increased
