@@ -25,5 +25,4 @@ class UserResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     
-    # Pydantic V2 стиль
     model_config = {"from_attributes": True}

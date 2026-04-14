@@ -23,7 +23,13 @@ app = FastAPI(
 # CORS Middleware (разрешаем VK и фронтенд)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.FRONTEND_URL, "https://vk.com", "https://*.vk.com"],
+    allow_origins=[
+        settings.FRONTEND_URL,  # https://app.chichekin-tech.ru
+        "https://app.chichekin-tech.ru",
+        "https://vk.com",
+        "https://m.vk.com",
+        "http://localhost:5173",  # Для локальной разработки
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
